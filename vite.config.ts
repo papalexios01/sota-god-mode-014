@@ -1,21 +1,54 @@
-import { defineConfig } from "vite";
-import react from "@vitejs/plugin-react-swc";
-import path from "path";
-import { componentTagger } from "lovable-tagger";
+import { defineConfig } from 'vite';
+import react from '@vitejs/plugin-react';
+import { resolve } from 'path';
 
-// https://vitejs.dev/config/
-export default defineConfig(({ mode }) => ({
+export default defineConfig({
+  plugins: [react()],
+  
+  resolve: {
+    alias: {
+      '@': resolve(__dirname, 'src'),
+    },
+  },
+
   server: {
-    host: "::",
-    port: 8080,
     hmr: {
       overlay: false,
     },
-  },
-  plugins: [react(), mode === "development" && componentTagger()].filter(Boolean),
-  resolve: {
-    alias: {
-      "@": path.resolve(__dirname, "./src"),
+    proxy: {
+      '/api/proxy': {
+        target: 'https://api.allorigins.win',
+        changeOrigin: true,
+        rewrite: (path) => {
+          const url = new URL(path, 'http://localhost');
+          const targetUrl = url.searchParams.get('url');
+          return `/raw?url=${targetUrl}`;
+        },
+      },
     },
   },
-}));
+  
+  build: {
+    target: 'esnext',
+    outDir: 'dist',
+    sourcemap: false,
+    minify: 'esbuild',
+    chunkSizeWarningLimit: 1500,
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          'vendor-react': ['react', 'react-dom'],
+          'vendor-ai': ['openai'],
+        },
+      },
+    },
+  },
+  
+  define: {
+    'process.env': {},
+  },
+  
+  optimizeDeps: {
+    exclude: ['@anthropic-ai/sdk'],
+  },
+});

@@ -23,6 +23,7 @@ interface PublishRequest {
   featuredImage?: string;
   slug?: string;
   metaDescription?: string;
+  seoTitle?: string; // SEO-optimized title for Yoast/RankMath
 }
 
 interface WordPressPost {
@@ -52,7 +53,8 @@ serve(async (req: Request) => {
       categories,
       tags,
       slug,
-      metaDescription
+      metaDescription,
+      seoTitle
     } = body;
 
     // Validate required fields
@@ -91,10 +93,18 @@ serve(async (req: Request) => {
     if (categories && categories.length > 0) postData.categories = categories;
     if (tags && tags.length > 0) postData.tags = tags;
 
-    // Add Yoast SEO meta if meta description provided
-    if (metaDescription) {
+    // Add Yoast SEO meta fields if provided (works with Yoast, RankMath, All-in-One SEO)
+    if (metaDescription || seoTitle) {
       postData.meta = {
-        _yoast_wpseo_metadesc: metaDescription,
+        // Yoast SEO
+        _yoast_wpseo_metadesc: metaDescription || '',
+        _yoast_wpseo_title: seoTitle || title,
+        // RankMath SEO
+        rank_math_description: metaDescription || '',
+        rank_math_title: seoTitle || title,
+        // All-in-One SEO
+        _aioseo_description: metaDescription || '',
+        _aioseo_title: seoTitle || title,
       };
     }
 

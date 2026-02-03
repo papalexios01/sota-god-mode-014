@@ -26,6 +26,7 @@ export function useWordPressPublish() {
       status?: 'draft' | 'publish' | 'pending' | 'private';
       slug?: string;
       metaDescription?: string;
+      seoTitle?: string; // SEO-optimized title for Yoast/RankMath
     }
   ): Promise<PublishResult> => {
     setIsPublishing(true);
@@ -51,6 +52,7 @@ export function useWordPressPublish() {
           status: options?.status || 'draft',
           slug: safeSlug,
           metaDescription: options?.metaDescription,
+          seoTitle: options?.seoTitle, // Pass SEO title to edge function
         };
 
         const { data, error } = await supabase.functions.invoke('wordpress-publish', {

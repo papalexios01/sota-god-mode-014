@@ -9,6 +9,8 @@ import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { getSupabaseAnonKey, getSupabaseUrl } from "@/integrations/supabase/client";
 import { crawlSitemapUrls, type SitemapCrawlProgress } from "@/lib/sitemap/crawlSitemap";
+import { fetchSitemapTextRaced } from "@/lib/sitemap/fetchSitemapText";
+import { discoverWordPressUrls } from "@/lib/sitemap/wordpressDiscovery";
 
 const tabs = [
   { id: "bulk", label: "📚 Bulk Planner", icon: BookOpen },
@@ -105,150 +107,15 @@ export function ContentStrategy() {
    * and return the first successful result. This makes the crawl 5-10x faster.
    */
   const fetchSitemapText = async (targetUrl: string, externalSignal?: AbortSignal): Promise<string> => {
-    const trimmed = targetUrl.trim();
-
-    const isLikelySitemapXml = (text: string) =>
-      /<\s*(?:[A-Za-z_][\w.-]*:)?(urlset|sitemapindex)\b/i.test(text);
-
-    // Fetch with timeout helper
-    const fetchWithTimeout = async (
-      url: string,
-      options: RequestInit,
-      timeoutMs: number
-    ): Promise<Response> => {
-      const controller = new AbortController();
-      
-      // Link to external signal
-      if (externalSignal) {
-        if (externalSignal.aborted) throw new Error("Cancelled");
-        externalSignal.addEventListener("abort", () => controller.abort(), { once: true });
-      }
-
-      const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
-      try {
-        const response = await fetch(url, { ...options, signal: controller.signal });
-        window.clearTimeout(timeoutId);
-        return response;
-      } catch (e) {
-        window.clearTimeout(timeoutId);
-        throw e;
-      }
-    };
-
-    // Define all fetch strategies
-    const createStrategies = () => {
-      const strategies: Array<{
-        name: string;
-        execute: () => Promise<string>;
-        timeout: number;
-      }> = [];
-
-      const supabaseUrl = getSupabaseUrl();
-      const anonKey = getSupabaseAnonKey();
-
-      // Strategy 1: Supabase Edge Function (most reliable, server-side)
-      if (supabaseUrl && anonKey) {
-        strategies.push({
-          name: "Supabase",
-          timeout: 25000, // 25s - aggressive but realistic
-          execute: async () => {
-            const edgeUrl = `${supabaseUrl}/functions/v1/fetch-sitemap?url=${encodeURIComponent(trimmed)}`;
-            const response = await fetchWithTimeout(
-              edgeUrl,
-              {
-                method: "GET",
-                headers: {
-                  "Accept": "application/xml, text/xml, */*",
-                  "apikey": anonKey,
-                  "Authorization": `Bearer ${anonKey}`,
-                },
-              },
-              25000
-            );
-            if (!response.ok) throw new Error(`HTTP ${response.status}`);
-            const text = await response.text();
-            if (!isLikelySitemapXml(text)) throw new Error("Not XML");
-            return text;
-          },
-        });
-      }
-
-      // Strategy 2: Direct fetch (works if site has CORS headers)
-      strategies.push({
-        name: "Direct",
-        timeout: 10000,
-        execute: async () => {
-          const response = await fetchWithTimeout(
-            trimmed,
-            { 
-              method: "GET", 
-              headers: { "Accept": "application/xml, text/xml, */*" },
-              mode: "cors",
-            },
-            10000
-          );
-          if (!response.ok) throw new Error(`HTTP ${response.status}`);
-          const text = await response.text();
-          if (!isLikelySitemapXml(text)) throw new Error("Not XML");
-          return text;
-        },
-      });
-
-      // Strategy 3: corsproxy.io (backup)
-      strategies.push({
-        name: "corsproxy",
-        timeout: 15000,
-        execute: async () => {
-          const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(trimmed)}`;
-          const response = await fetchWithTimeout(proxyUrl, { method: "GET" }, 15000);
-          if (!response.ok) throw new Error(`HTTP ${response.status}`);
-          const text = await response.text();
-          if (!isLikelySitemapXml(text)) throw new Error("Not XML");
-          return text;
-        },
-      });
-
-      return strategies;
-    };
-
-    const strategies = createStrategies();
-
-    // ✅ PARALLEL RACE: Run all strategies simultaneously, return first success
-    const raceWithErrors = async (): Promise<string> => {
-      if (strategies.length === 0) {
-        throw new Error("No fetch strategies available");
-      }
-
-      return new Promise((resolve, reject) => {
-        const errors: string[] = [];
-        let resolved = false;
-        let completed = 0;
-
-        strategies.forEach(({ name, execute }) => {
-          execute()
-            .then((result) => {
-              if (!resolved) {
-                resolved = true;
-                console.log(`[Sitemap] ✅ ${name} succeeded first`);
-                resolve(result);
-              }
-            })
-            .catch((err) => {
-              const msg = err instanceof Error ? err.message : String(err);
-              errors.push(`${name}: ${msg}`);
-              completed++;
-              console.log(`[Sitemap] ❌ ${name} failed: ${msg}`);
-              
-              // If all strategies failed, reject with all errors
-              if (completed === strategies.length && !resolved) {
-                reject(new Error(`All strategies failed: ${errors.join(" | ")}`));
-              }
-            });
-        });
-      });
-    };
-
-    return raceWithErrors();
+    const supabaseUrl = getSupabaseUrl();
+    const anonKey = getSupabaseAnonKey();
+    return fetchSitemapTextRaced(targetUrl, {
+      supabaseUrl,
+      supabaseAnonKey: anonKey,
+      signal: externalSignal,
+      perStrategyTimeoutMs: 12000,
+      overallTimeoutMs: 15000,
+    });
   };
 
   const handleGenerateContentPlan = () => {
@@ -313,6 +180,44 @@ export function ContentStrategy() {
     try {
       const input = sitemapUrl.trim();
 
+      // ✅ FASTEST PATH (WordPress): If the user enters a site URL (not a .xml), use WP REST API.
+      // This bypasses sitemap/CORS issues and is usually 10-100x faster.
+      const looksLikeXml = /\.xml(\.gz)?\b/i.test(input);
+      if (!looksLikeXml) {
+        try {
+          setCrawlStatus("Trying WordPress API…");
+          const wpUrls = await discoverWordPressUrls(input, {
+            signal,
+            timeoutMs: 8000,
+            perPage: 100,
+            maxPages: 250,
+            maxUrls: 100000,
+            onProgress: (p) => {
+              if (crawlRunIdRef.current !== runId) return;
+              const total = p.totalPages ? `/${p.totalPages}` : "";
+              setCrawlStatus(`WP API • ${p.endpoint} page ${p.page}${total} • ${p.discovered.toLocaleString()} URLs`);
+              setCrawlFoundCount(p.discovered);
+            },
+          });
+
+          if (wpUrls.length > 0) {
+            if (crawlRunIdRef.current !== runId) return;
+            const blogPostUrls = filterBlogPostUrls(wpUrls);
+            setCrawledUrls(blogPostUrls);
+            setSitemapUrls(blogPostUrls);
+            setCrawlFoundCount(blogPostUrls.length);
+            setCrawlStatus(`Done (WP API) • ${blogPostUrls.length.toLocaleString()} blog posts (filtered from ${wpUrls.length.toLocaleString()} total)`);
+            toast.success(`Found ${blogPostUrls.length.toLocaleString()} URLs via WordPress API!`);
+            return;
+          }
+        } catch (e) {
+          // WP API is optional; fall back to sitemap crawl
+          const msg = e instanceof Error ? e.message : String(e);
+          // eslint-disable-next-line no-console
+          console.info("[Sitemap] WordPress API discovery skipped/failed:", msg);
+        }
+      }
+
       // ✅ Enterprise robustness: if the user provides a heavy/slow sitemap (e.g. post-sitemap.xml),
       // automatically try the common WordPress sitemap entrypoints too.
       const candidates: string[] = (() => {
@@ -347,8 +252,8 @@ export function ContentStrategy() {
       const crawlOptions = {
         // ✅ HIGH concurrency for speed - parallel racing handles reliability
         concurrency: 8,
-        // ✅ FAST timeout - parallel racing means we don't need huge timeouts
-        fetchTimeoutMs: 30000,
+        // ✅ HARD cap per-sitemap fetch+parse time so we never “hang” on one URL
+        fetchTimeoutMs: 17000,
         signal,
         onProgress: (p: SitemapCrawlProgress) => {
           if (crawlRunIdRef.current !== runId) return;

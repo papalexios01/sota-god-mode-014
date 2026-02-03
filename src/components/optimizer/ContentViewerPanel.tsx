@@ -109,6 +109,9 @@ export function ContentViewerPanel({
   const handlePublishToWordPress = async () => {
     if (!item || !content) return;
     
+    // Use the SEO title if available, otherwise fall back to the display title
+    const effectiveSeoTitle = generatedContent?.seoTitle || item.title.replace(/^\s*rewrite\s*:\s*/i, '').trim();
+    
     const result = await publish(
       item.title,
       content,
@@ -117,6 +120,7 @@ export function ContentViewerPanel({
         slug: effectivePublishSlug,
         metaDescription: generatedContent?.metaDescription,
         excerpt: generatedContent?.metaDescription,
+        seoTitle: effectiveSeoTitle, // Pass SEO-optimized title for Yoast/RankMath
       }
     );
 
@@ -834,19 +838,40 @@ export function ContentViewerPanel({
                   </div>
 
                   <div className="p-4 bg-muted/20 border border-border rounded-xl">
-                    <h4 className="text-sm font-medium text-foreground mb-2">What will be published:</h4>
-                    <ul className="text-sm text-muted-foreground space-y-1">
-                      <li>• Full HTML content ({wordCount.toLocaleString()} words)</li>
-                      <li>• SEO meta description</li>
-                      {sourcePathname && (
-                        <li>
-                          • Source URL path: <span className="font-mono">{sourcePathname}</span>
+                    <h4 className="text-sm font-medium text-foreground mb-3">What will be published:</h4>
+                    <ul className="text-sm text-muted-foreground space-y-2">
+                      <li className="flex items-start gap-2">
+                        <span className="text-primary">•</span>
+                        <span>Full HTML content ({wordCount.toLocaleString()} words)</span>
+                      </li>
+                      {generatedContent?.seoTitle && (
+                        <li className="flex items-start gap-2">
+                          <span className="text-green-400">•</span>
+                          <span>SEO Title: <span className="font-medium text-foreground">"{generatedContent.seoTitle}"</span></span>
                         </li>
                       )}
-                      <li>
-                        • URL slug: /<span className="font-mono">{effectivePublishSlug}</span>
+                      {generatedContent?.metaDescription && (
+                        <li className="flex items-start gap-2">
+                          <span className="text-green-400">•</span>
+                          <span>Meta Description ({generatedContent.metaDescription.length} chars)</span>
+                        </li>
+                      )}
+                      {sourcePathname && (
+                        <li className="flex items-start gap-2">
+                          <span className="text-blue-400">•</span>
+                          <span>Source URL: <span className="font-mono text-xs">{sourcePathname}</span></span>
+                        </li>
+                      )}
+                      <li className="flex items-start gap-2">
+                        <span className="text-yellow-400">•</span>
+                        <span>WordPress Slug: <span className="font-mono text-foreground">/{effectivePublishSlug}</span></span>
                       </li>
                     </ul>
+                    <div className="mt-3 pt-3 border-t border-border">
+                      <p className="text-xs text-muted-foreground">
+                        ✨ SEO title and meta description will be set in Yoast SEO, RankMath, or All-in-One SEO
+                      </p>
+                    </div>
                   </div>
                 </div>
 

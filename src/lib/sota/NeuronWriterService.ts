@@ -720,43 +720,61 @@ export class NeuronWriterService {
 
   /**
    * Format ALL terms, entities, and headings for AI prompt - COMPREHENSIVE
+   * Designed to achieve 90%+ NeuronWriter Content Score
    */
   formatTermsForPrompt(terms: NeuronWriterTerm[], analysis?: NeuronWriterAnalysis): string {
     const required = terms.filter(t => t.type === 'required');
     const recommended = terms.filter(t => t.type === 'recommended');
+    
+    let prompt = `
+═══════════════════════════════════════════════════════════════
+🎯 NEURONWRITER SEO OPTIMIZATION - TARGET: 90%+ CONTENT SCORE
+═══════════════════════════════════════════════════════════════
 
-    let prompt = '### 🔴 REQUIRED KEYWORDS (MUST include with specified frequency):\n';
-    prompt += required.map(t => {
-      const range = t.sugg_usage ? `${t.sugg_usage[0]}-${t.sugg_usage[1]}x` : `${t.frequency}x`;
-      return `- "${t.term}": use ${range}`;
-    }).join('\n');
+### 🔴 REQUIRED KEYWORDS (MUST include at EXACT frequency - CRITICAL):
+${required.map(t => {
+  const range = t.sugg_usage ? `${t.sugg_usage[0]}-${t.sugg_usage[1]}x` : `${t.frequency}x`;
+  return `• "${t.term}" → use EXACTLY ${range} (${t.usage_pc || 70}% competitor usage)`;
+}).join('\n')}
 
-    prompt += '\n\n### 🟡 RECOMMENDED KEYWORDS (include naturally):\n';
-    prompt += recommended.slice(0, 20).map(t => `- "${t.term}"`).join('\n');
+### 🟡 RECOMMENDED KEYWORDS (include 80%+ of these naturally):
+${recommended.slice(0, 25).map(t => {
+  const range = t.sugg_usage ? `${t.sugg_usage[0]}-${t.sugg_usage[1]}x` : '1-2x';
+  return `• "${t.term}" → target ${range}`;
+}).join('\n')}`;
 
-    // Add extended keywords if available
+    // Add ALL extended keywords
     if (analysis?.termsExtended && analysis.termsExtended.length > 0) {
-      prompt += '\n\n### 🟢 EXTENDED KEYWORDS (use where relevant):\n';
-      prompt += analysis.termsExtended.slice(0, 25).map(t => `- "${t.term}"`).join('\n');
+      prompt += `\n\n### 🟢 EXTENDED KEYWORDS (include 50%+ for comprehensive coverage):
+${analysis.termsExtended.slice(0, 30).map(t => `• "${t.term}"`).join('\n')}`;
     }
 
-    // Add entities if available
+    // Add ALL entities - these are critical for E-E-A-T
     if (analysis?.entities && analysis.entities.length > 0) {
-      prompt += '\n\n### 🔵 NAMED ENTITIES (mention these specific names/brands/places):\n';
-      prompt += analysis.entities.slice(0, 15).map(e => `- "${e.entity}"${e.type ? ` (${e.type})` : ''}`).join('\n');
+      prompt += `\n\n### 🔵 NAMED ENTITIES - MANDATORY (mention ALL of these at least once):
+${analysis.entities.slice(0, 20).map(e => `• "${e.entity}"${e.type ? ` [${e.type}]` : ''}`).join('\n')}`;
     }
 
-    // Add H2 heading recommendations
+    // Add H2 heading recommendations - USE THESE AS YOUR ACTUAL H2s
     if (analysis?.headingsH2 && analysis.headingsH2.length > 0) {
-      prompt += '\n\n### 📌 RECOMMENDED H2 HEADINGS (use these or similar):\n';
-      prompt += analysis.headingsH2.slice(0, 10).map(h => `- ${h.text}`).join('\n');
+      prompt += `\n\n### 📌 USE THESE AS YOUR H2 HEADINGS (or very close variations):
+${analysis.headingsH2.slice(0, 12).map((h, i) => `${i + 1}. <h2>${h.text}</h2>`).join('\n')}`;
     }
 
     // Add H3 heading recommendations
     if (analysis?.headingsH3 && analysis.headingsH3.length > 0) {
-      prompt += '\n\n### 📎 RECOMMENDED H3 SUBHEADINGS (use these or similar):\n';
-      prompt += analysis.headingsH3.slice(0, 12).map(h => `- ${h.text}`).join('\n');
+      prompt += `\n\n### 📎 USE THESE AS YOUR H3 SUBHEADINGS:
+${analysis.headingsH3.slice(0, 15).map(h => `• <h3>${h.text}</h3>`).join('\n')}`;
     }
+
+    prompt += `\n
+═══════════════════════════════════════════════════════════════
+⚠️ KEYWORD DISTRIBUTION RULES:
+• Spread keywords EVENLY across all sections (not clustered)
+• Primary keyword in first 100 words AND last 100 words
+• Required terms must appear in H2 headings when natural
+• Never list keywords - always in flowing sentences
+═══════════════════════════════════════════════════════════════`;
 
     return prompt;
   }

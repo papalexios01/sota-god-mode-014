@@ -123,6 +123,7 @@ export interface ContentMetrics {
 export interface GeneratedContent {
   id: string;
   title: string;
+  seoTitle?: string; // SEO-optimized title for WordPress/meta tags (may differ from display title)
   content: string;
   metaDescription: string;
   slug: string;

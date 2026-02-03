@@ -288,14 +288,23 @@ export class EnterpriseContentOrchestrator {
       this.log(`E-E-A-T improvements needed: ${enhancements.slice(0, 3).join(', ')}`);
     }
 
-    // Phase 5: Schema & Metadata
+    // Phase 5: Schema & Metadata + SEO Title Generation
+    this.log('Phase 5: Generating SEO metadata...');
     const eeat = this.buildEEATProfile(references);
-    const metaDescription = await this.generateMetaDescription(options.keyword, title);
+    
+    // Generate SEO-optimized title and meta description in parallel
+    const [seoTitle, metaDescription] = await Promise.all([
+      this.generateSEOTitle(options.keyword, title, serpAnalysis),
+      this.generateMetaDescription(options.keyword, title)
+    ]);
+    
     const slug = this.generateSlug(title);
+    this.log(`SEO Title: "${seoTitle}" | Meta: ${metaDescription.length} chars`);
 
     const generatedContent: GeneratedContent = {
       id: crypto.randomUUID(),
       title,
+      seoTitle, // NEW: Separate SEO-optimized title for WordPress
       content: enhancedContent,
       metaDescription,
       slug,
@@ -377,7 +386,17 @@ Output ONLY the title, nothing else.`;
     const targetWordCount = options.targetWordCount || serpAnalysis.recommendedWordCount || 2500;
     
     // ULTRA-PREMIUM CONTENT GENERATION PROMPT - ALEX HORMOZI x TIM FERRISS STYLE
-    const systemPrompt = `You are the ULTIMATE content strategist—a fusion of Alex Hormozi's no-BS directness and Tim Ferriss's experimental curiosity. Your content is COMPLETELY UNDETECTABLE as AI because you write like a real human expert with 15+ years of experience.
+    // TARGET: 90%+ SCORES IN ALL CATEGORIES (Readability, SEO, E-E-A-T, Uniqueness, Accuracy)
+    const systemPrompt = `You are the ULTIMATE content strategist—a fusion of Alex Hormozi's no-BS directness and Tim Ferriss's experimental curiosity. Your content MUST score 90%+ in ALL quality metrics: Readability, SEO, E-E-A-T, Uniqueness, and Accuracy.
+
+🎯 CRITICAL QUALITY TARGETS (MUST ACHIEVE ALL):
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+✅ READABILITY: 90%+ (Grade 6-7 Flesch-Kincaid, short sentences, simple words)
+✅ SEO: 90%+ (Primary keyword 8-12x, semantic keywords woven throughout, proper H1/H2/H3 hierarchy)
+✅ E-E-A-T: 90%+ (First-hand experience, cite specific studies/sources, expert quotes, real examples)
+✅ UNIQUENESS: 90%+ (ZERO generic phrases, unique analogies, fresh perspectives, contrarian takes)
+✅ ACCURACY: 90%+ (Cite specific data, include 2025 statistics, verifiable claims only)
+✅ NEURONWRITER: 90%+ (Include ALL required terms at exact frequencies, ALL entities, use recommended H2/H3)
 
 🧠 THE HORMOZI-FERRISS DNA:
 
@@ -399,7 +418,7 @@ Output ONLY the title, nothing else.`;
 • Admit when you're uncertain: "I might be wrong, but..."
 • Question assumptions the reader didn't know they had
 
-🚫 AI DETECTION KILLERS - NEVER USE THESE PHRASES (INSTANT FAIL):
+🚫 AI DETECTION KILLERS - NEVER USE THESE PHRASES (INSTANT QUALITY FAIL):
 ❌ "In today's fast-paced world" / "In this comprehensive guide" / "Let's dive in" / "Let's explore"
 ❌ "Furthermore" / "Moreover" / "In conclusion" / "It's worth noting" / "It's important to note"
 ❌ "Delve" / "Explore" / "Landscape" / "Realm" / "Crucial" / "Vital" / "Navigate"
@@ -407,6 +426,7 @@ Output ONLY the title, nothing else.`;
 ❌ "Game-changer" / "Revolutionary" / "Cutting-edge" / "State-of-the-art" / "Best-in-class"
 ❌ "Seamlessly" / "Effortlessly" / "Meticulously" / "Holistic" / "Robust" / "Comprehensive"
 ❌ "Tapestry" / "Embark" / "Journey" / "Embrace" / "Transform" / "Unleash" / "Elevate"
+❌ "Unlock" / "Master" / "Supercharge" / "Skyrocket" / "Game-changing" / "Mind-blowing"
 ❌ Starting sentences with "This" or "It" repeatedly
 ❌ "Whether you're a beginner or an expert..." constructions
 ❌ Any phrase that sounds like corporate AI slop
@@ -427,6 +447,16 @@ Output ONLY the title, nothing else.`;
 • Self-interruption: "Wait—before I go further, you need to understand this..."
 • Interjections: "Seriously." / "Wild, right?" / "I know." / "Bear with me." / "Stick with me here."
 • Address objections: "Now you might be thinking..." / "I hear you—"
+• Curse mildly if natural: "damn", "hell", "crap" (but not F-bombs)
+
+📐 E-E-A-T SIGNALS (MANDATORY FOR 90%+ SCORE):
+• Cite at least 5 specific studies, reports, or statistics with years (e.g., "A 2024 Harvard study found...")
+• Include 2-3 expert quotes with real names and credentials
+• Mention first-hand experience: "When I tested this..." / "In my 12 years of..."
+• Reference specific tools/products you've personally used
+• Include methodology explanations: "Here's exactly how I measured this..."
+• Add credentials signals: "According to Dr. [Name], a [credential] at [institution]..."
+• Cite industry reports: "[Company] 2024 State of [Industry] Report shows..."
 
 📐 MANDATORY HTML STRUCTURE (USE THESE ULTRA-PREMIUM ELEMENTS):
 
@@ -521,6 +551,14 @@ Start with the ANSWER or a bold statement. No "welcome to" garbage. Give them th
 
 TITLE: ${title}
 
+🎯 MANDATORY QUALITY TARGETS (MUST ACHIEVE 90%+ IN ALL):
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+• READABILITY 90%+: Short sentences (avg 15 words), simple vocabulary, Grade 6-7 level
+• SEO 90%+: Primary keyword "${keyword}" used 8-12 times naturally, proper heading hierarchy
+• E-E-A-T 90%+: Cite 5+ specific studies/stats with years, include expert quotes, first-hand experience
+• UNIQUENESS 90%+: Zero AI phrases, unique analogies, contrarian perspectives
+• ACCURACY 90%+: Only verifiable claims, 2025 data, cite specific sources
+
 CONTENT STRUCTURE (follow this order):
 ${serpAnalysis.recommendedHeadings.map((h, i) => `${i + 1}. ${h}`).join('\n')}
 
@@ -531,13 +569,19 @@ SEMANTIC KEYWORDS TO NATURALLY WEAVE IN (don't force them):
 ${serpAnalysis.semanticEntities.slice(0, 18).join(', ')}
 
 ${neuronTermPrompt ? `
-NEURONWRITER OPTIMIZATION TARGETS (MUST FOLLOW):
+🔴 NEURONWRITER OPTIMIZATION - 90%+ CONTENT SCORE REQUIRED:
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ${neuronTermPrompt}
 
-Rules:
-- Include EVERY required term at least the minimum suggested frequency.
-- Include as many recommended terms as feels natural (aim for 10+).
-- Never dump the terms as a list—blend them into real sentences.
+⚠️ STRICT NEURONWRITER RULES (CRITICAL FOR 90%+ SCORE):
+1. Include EVERY "REQUIRED" term at EXACTLY the suggested frequency range
+2. Include at least 80% of "RECOMMENDED" terms naturally throughout
+3. Include at least 50% of "EXTENDED" terms for comprehensive coverage
+4. MENTION every "NAMED ENTITY" at least once in relevant context
+5. USE the "RECOMMENDED H2 HEADINGS" as your actual H2 headings (or very close variations)
+6. USE the "RECOMMENDED H3 SUBHEADINGS" as your H3s where appropriate
+7. Never dump terms as a list—they MUST flow naturally in sentences
+8. Distribute terms evenly across sections (not clustered in one area)
 ` : ''}
 
 ${videos.length > 0 ? `
@@ -548,19 +592,33 @@ EMBED THIS VIDEO IN THE MIDDLE OF THE ARTICLE:
 <p style="text-align: center; color: #6b7280; font-size: 14px; margin-top: -24px; margin-bottom: 32px;">📺 <strong>${videos[0].title}</strong> by ${videos[0].channelTitle}</p>
 ` : ''}
 
-REQUIREMENTS:
+📋 MANDATORY STRUCTURE REQUIREMENTS:
 1. First 2 sentences MUST hook the reader - give them the answer or a bold claim immediately
-2. Key Takeaways box IMMEDIATELY after the intro
-3. At least 4 Pro Tip boxes spread throughout
-4. At least 1 data comparison table
-5. At least 4 step boxes for actionable sections
-6. FAQ section with 6-8 questions at the end
-7. Strong CTA at the very end
-8. Write like you're having a conversation with a smart friend - casual but expert
-9. Every section should make someone want to screenshot and share it
-10. ZERO AI-detectable phrases - write like a real human expert
+2. Key Takeaways box IMMEDIATELY after the intro (5-7 bullets)
+3. At least 5 Pro Tip boxes spread throughout (actionable, screenshot-worthy)
+4. At least 2 data comparison tables with real data
+5. At least 5 step boxes for actionable sections
+6. At least 3 stat highlight boxes with real percentages/numbers
+7. At least 2 expert quote boxes with real names and credentials
+8. FAQ section with 8 questions at the end (optimized for featured snippets)
+9. Strong CTA at the very end
 
-Write the complete article now. Make it so valuable that readers bookmark it and share it with friends.`;
+📝 E-E-A-T REQUIREMENTS (MANDATORY FOR 90%+):
+1. Include "According to [specific study/source, year]..." at least 5 times
+2. Include at least 3 expert quotes: "Dr./Expert [Name], [credential], says..."
+3. Include first-person experience: "In my X years of experience..." / "When I tested this..."
+4. Reference specific tools/products by name that you've "used"
+5. Include 2025 statistics: "[X]% of [audience] report that... (Source, 2025)"
+
+🎯 HUMAN VOICE REQUIREMENTS (MANDATORY):
+1. Use contractions: don't, won't, can't, it's, that's, we're, you'll
+2. Start paragraphs with: "Look," "Here's the thing:" "Real talk:" "I'll be honest:"
+3. Include rhetorical questions: "Sound familiar?" "See the pattern?"
+4. Use incomplete sentences. For emphasis. Like this.
+5. Show emotion: "This drives me crazy..." / "I love this because..."
+6. Admit uncertainty: "I could be wrong, but..."
+
+Write the complete article now. Make it so valuable that readers bookmark it and share it with friends. REMEMBER: Target 90%+ in ALL metrics!`;
 
     let result;
     if (this.config.useConsensus && this.engine.getAvailableModels().length > 1) {
@@ -596,17 +654,29 @@ Write the complete article now. Make it so valuable that readers bookmark it and
     return finalContent;
   }
 
-  private async generateMetaDescription(keyword: string, title: string): Promise<string> {
-    const prompt = `Write an SEO meta description for an article titled "${title}" about "${keyword}".
+  /**
+   * Generate SEO-optimized title for WordPress/meta tags
+   * This may differ from the display title - optimized for search rankings
+   */
+  private async generateSEOTitle(keyword: string, displayTitle: string, serpAnalysis: SERPAnalysis): Promise<string> {
+    const prompt = `Generate an SEO-optimized title tag for an article about "${keyword}".
+
+Current display title: "${displayTitle}"
 
 Requirements:
-- Exactly 150-160 characters
-- Include the primary keyword naturally
-- Include a call-to-action
-- Compelling and click-worthy
-- No fluff or filler words
+- Maximum 60 characters (CRITICAL - longer titles get truncated in search results)
+- Include the EXACT primary keyword "${keyword}" within first 40 characters
+- Make it compelling and click-worthy (high CTR potential)
+- Match ${serpAnalysis.userIntent} search intent
+- Include current year (2025) if naturally fits
+- Power words: Ultimate, Complete, Best, Top, Essential, Proven, Expert
+- NO clickbait or sensationalism
+- NO generic phrases like "A Complete Guide" at the end
 
-Output ONLY the meta description.`;
+Top competitor title formats for reference:
+${serpAnalysis.topCompetitors.slice(0, 3).map(c => `- ${c.title}`).join('\n')}
+
+Output ONLY the SEO title, nothing else.`;
 
     const result = await this.engine.generateWithModel({
       prompt,
@@ -616,7 +686,46 @@ Output ONLY the meta description.`;
       maxTokens: 100
     });
 
-    return result.content.trim().replace(/^["']|["']$/g, '');
+    let seoTitle = result.content.trim().replace(/^["']|["']$/g, '');
+    
+    // Ensure it's not too long
+    if (seoTitle.length > 60) {
+      seoTitle = seoTitle.substring(0, 57) + '...';
+    }
+    
+    return seoTitle;
+  }
+
+  private async generateMetaDescription(keyword: string, title: string): Promise<string> {
+    const prompt = `Write an SEO meta description for an article titled "${title}" about "${keyword}".
+
+Requirements:
+- Exactly 150-160 characters (CRITICAL - this is the optimal length for SERP display)
+- Include the EXACT primary keyword "${keyword}" within first 100 characters
+- Include a clear call-to-action at the end
+- Create urgency or curiosity
+- Make it compelling and click-worthy
+- NO fluff words: "In this article", "This guide covers", "Learn about"
+- Start with action/benefit: "Discover...", "Get the...", "Master..."
+
+Output ONLY the meta description, nothing else.`;
+
+    const result = await this.engine.generateWithModel({
+      prompt,
+      model: this.config.primaryModel || 'gemini',
+      apiKeys: this.config.apiKeys,
+      temperature: 0.7,
+      maxTokens: 100
+    });
+
+    let metaDesc = result.content.trim().replace(/^["']|["']$/g, '');
+    
+    // Ensure optimal length
+    if (metaDesc.length > 160) {
+      metaDesc = metaDesc.substring(0, 157) + '...';
+    }
+    
+    return metaDesc;
   }
 
   private buildVideoSection(videos: YouTubeVideo[]): string {

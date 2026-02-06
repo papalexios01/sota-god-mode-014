@@ -61,7 +61,7 @@ export function useWordPressPublish() {
         existingPostId: options?.existingPostId,
       };
 
-      const maxAttempts = 2;
+      const maxAttempts = 3;
       let lastError: Error | null = null;
       let data: Record<string, unknown> | null = null;
 
@@ -71,31 +71,71 @@ export function useWordPressPublish() {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(body),
-            signal: AbortSignal.timeout(60000),
+            signal: AbortSignal.timeout(90000),
           });
-          data = await response.json();
+
+          const responseText = await response.text();
+
+          if (!responseText || responseText.trim().length === 0) {
+            throw new Error(
+              `WordPress server returned empty response (HTTP ${response.status}). ` +
+              'The API server may not be running. Try refreshing the page.'
+            );
+          }
+
+          try {
+            data = JSON.parse(responseText);
+          } catch {
+            if (response.status >= 500) {
+              throw new Error(`WordPress server error (HTTP ${response.status}). Try again in a moment.`);
+            }
+            if (response.status === 404) {
+              throw new Error('WordPress publish endpoint not found. Ensure the API server is running.');
+            }
+            throw new Error(
+              `Invalid response from server (HTTP ${response.status}): ${responseText.slice(0, 200)}`
+            );
+          }
+
           break;
         } catch (fetchError) {
           lastError = fetchError instanceof Error ? fetchError : new Error(String(fetchError));
-          if (attempt < maxAttempts - 1 && lastError.name !== 'AbortError') {
-            await new Promise(r => setTimeout(r, 2000));
+          const isRetryable = !lastError.message.includes('not configured') &&
+            !lastError.message.includes('Invalid WordPress URL') &&
+            lastError.name !== 'AbortError';
+          if (attempt < maxAttempts - 1 && isRetryable) {
+            console.warn(`[WordPress] Attempt ${attempt + 1} failed: ${lastError.message}. Retrying...`);
+            await new Promise(r => setTimeout(r, 2000 * (attempt + 1)));
             continue;
           }
           if (lastError.name === 'TimeoutError' || lastError.message?.includes('timeout')) {
-            throw new Error('WordPress publish timed out after 60 seconds');
+            throw new Error('WordPress publish timed out after 90 seconds. The post may be too large.');
           }
           throw lastError;
         }
       }
 
       if (!data?.success) {
-        throw new Error((data?.error as string) || lastError?.message || 'Failed to publish to WordPress');
+        const serverError = (data?.error as string) || '';
+        const statusCode = data?.status as number;
+        let errorMsg = serverError || lastError?.message || 'Failed to publish to WordPress';
+
+        if (statusCode === 401 || serverError.includes('Authentication')) {
+          errorMsg = 'WordPress authentication failed. Check your username and application password in Setup.';
+        } else if (statusCode === 403) {
+          errorMsg = 'Permission denied. Ensure the WordPress user has publishing capabilities.';
+        } else if (statusCode === 404) {
+          errorMsg = 'WordPress REST API not found. Ensure permalinks are enabled.';
+        }
+
+        throw new Error(errorMsg);
       }
 
+      const post = data.post as Record<string, unknown> | undefined;
       const result: PublishResult = {
         success: true,
-        postId: data.post?.id,
-        postUrl: data.post?.url,
+        postId: post?.id as number | undefined,
+        postUrl: post?.url as string | undefined,
       };
 
       setPublishResult(result);

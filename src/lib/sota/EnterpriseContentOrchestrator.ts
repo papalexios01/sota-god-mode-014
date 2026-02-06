@@ -558,15 +558,13 @@ Now continue:`;
       let currentContent = enhancedContent;
       let currentScore = 0;
       const targetScore = 90;
-      const maxImprovementAttempts = 3;
-      
-      // Compile ALL terms for comprehensive suggestions
+      const maxImprovementAttempts = 5;
+
       const allTermsForSuggestions = [
         ...neuron.analysis.terms,
         ...(neuron.analysis.termsExtended || []),
       ];
-      
-      // Also include entities as pseudo-terms for suggestions
+
       const entityTerms = (neuron.analysis.entities || []).map(e => ({
         term: e.entity,
         weight: e.usage_pc || 30,
@@ -574,7 +572,10 @@ Now continue:`;
         type: 'recommended' as const,
         usage_pc: e.usage_pc,
       }));
-      
+
+      let previousScore = 0;
+      let stagnantRounds = 0;
+
       for (let attempt = 0; attempt <= maxImprovementAttempts; attempt++) {
         const evalRes = await neuron.service.evaluateContent(neuron.queryId, {
           html: currentContent,
@@ -584,94 +585,119 @@ Now continue:`;
         if (evalRes.success && typeof evalRes.contentScore === 'number') {
           currentScore = evalRes.contentScore;
           neuron.analysis.content_score = currentScore;
-          
-          if (currentScore >= targetScore || attempt === maxImprovementAttempts) {
-            if (currentScore >= targetScore) {
-              this.log(`NeuronWriter: ✅ Score ${currentScore}% (target: ${targetScore}%+) - PASSED`);
-            } else {
-              this.log(`NeuronWriter: ⚠️ Score ${currentScore}% after ${attempt} improvement attempts (target was ${targetScore}%)`);
-            }
+
+          if (currentScore >= targetScore) {
+            this.log(`NeuronWriter: Score ${currentScore}% (target: ${targetScore}%+) - PASSED`);
             enhancedContent = currentContent;
             break;
           }
-          
-          // Score below target - try to improve
-          this.log(`NeuronWriter: Score ${currentScore}% (below ${targetScore}%) - improving... (attempt ${attempt + 1}/${maxImprovementAttempts})`);
-          
-          // Get missing terms suggestions from ALL terms (not just a slice)
+
+          if (attempt === maxImprovementAttempts) {
+            this.log(`NeuronWriter: Score ${currentScore}% after ${attempt} attempts (target was ${targetScore}%)`);
+            enhancedContent = currentContent;
+            break;
+          }
+
+          if (currentScore <= previousScore && attempt > 0) {
+            stagnantRounds++;
+            if (stagnantRounds >= 2) {
+              this.log(`NeuronWriter: Score stagnant at ${currentScore}% for ${stagnantRounds} rounds. Stopping.`);
+              enhancedContent = currentContent;
+              break;
+            }
+          } else {
+            stagnantRounds = 0;
+          }
+          previousScore = currentScore;
+
+          const gap = targetScore - currentScore;
+          this.log(`NeuronWriter: Score ${currentScore}% (need +${gap}%) - improving... (attempt ${attempt + 1}/${maxImprovementAttempts})`);
+
           const suggestions = neuron.service.getOptimizationSuggestions(currentContent, allTermsForSuggestions);
           const entitySuggestions = neuron.service.getOptimizationSuggestions(currentContent, entityTerms);
           const allSuggestions = [...suggestions, ...entitySuggestions.slice(0, 10)];
-          
-          if (allSuggestions.length > 0) {
-            this.log(`Missing terms to add: ${allSuggestions.slice(0, 5).join(', ')}`);
-            
-            // Use AI to naturally incorporate missing terms
-            const improvementPrompt = `Improve this article by NATURALLY incorporating these missing SEO terms. 
-DO NOT just add them as a list - weave them into existing sentences or add new relevant paragraphs.
 
-MISSING TERMS TO ADD (include ALL of these):
-${allSuggestions.slice(0, 25).join('\n')}
+          const missingHeadings = (neuron.analysis.headingsH2 || [])
+            .filter(h => !currentContent.toLowerCase().includes(h.text.toLowerCase().slice(0, 20)))
+            .slice(0, 3);
 
-RULES:
-1. Keep ALL existing content - only ADD to it
-2. Terms must flow naturally in sentences
-3. Add terms in context where they make sense
-4. Maintain the article's voice and quality
-5. Add 3-5 new paragraphs if needed to incorporate terms naturally
-6. Include each missing term at least once, ideally 2-3 times in different contexts
-7. OUTPUT PURE HTML ONLY - NO MARKDOWN! Use <h2>, <h3>, <p>, <ul>, <li> tags - NEVER use ## or ### or * for formatting
+          if (allSuggestions.length > 0 || missingHeadings.length > 0) {
+            this.log(`Missing: ${allSuggestions.length} terms, ${missingHeadings.length} headings`);
 
-CURRENT ARTICLE:
+            const termsPerAttempt = Math.min(30, allSuggestions.length);
+            const termsList = allSuggestions.slice(0, termsPerAttempt);
+
+            const headingsInstruction = missingHeadings.length > 0
+              ? `\n\nMISSING H2 HEADINGS (add these as new sections):\n${missingHeadings.map(h => `- "${h.text}" (used by ${h.usage_pc}% of competitors)`).join('\n')}`
+              : '';
+
+            const improvementPrompt = `You are optimizing this article for a NeuronWriter content score of 90%+. Current score: ${currentScore}%.
+
+PRIORITY MISSING TERMS (MUST include each one naturally, at least 1-2 times):
+${termsList.map((t, i) => `${i + 1}. "${t}"`).join('\n')}
+${headingsInstruction}
+
+STRICT RULES:
+1. Preserve ALL existing HTML content exactly as-is
+2. ADD new paragraphs, sentences, or expand existing ones to include each missing term
+3. Every term must appear in a NATURAL sentence -- never dump terms as a list
+4. Distribute terms across different sections of the article, not clustered together
+5. Add 2-4 new subsections under relevant H2s if needed for natural placement
+6. Use the exact term form provided (singular/plural matters for scoring)
+7. OUTPUT PURE HTML ONLY. Use <h2>, <h3>, <p>, <ul>, <li>, <strong> tags. NEVER use markdown (##, **, -, etc.)
+8. Include terms in varied contexts: definitions, comparisons, examples, tips
+
+ARTICLE TO IMPROVE:
 ${currentContent}
 
-OUTPUT: Return the COMPLETE improved article in PURE HTML format (no markdown) with ALL missing terms naturally woven in.`;
+Return the COMPLETE improved article with ALL missing terms naturally incorporated.`;
 
             const improvedResult = await this.engine.generateWithModel({
-              prompt: improvementPrompt + `\n\n[Improvement attempt ${attempt + 1} of ${maxImprovementAttempts}]`,
+              prompt: improvementPrompt,
               model: this.config.primaryModel || 'gemini',
               apiKeys: this.config.apiKeys,
-              systemPrompt: 'You are an expert SEO content optimizer. Improve articles by naturally incorporating missing keywords to achieve 90%+ NeuronWriter scores. Output PURE HTML ONLY.',
-              temperature: 0.65
+              systemPrompt: `You are an elite SEO content optimizer specializing in NeuronWriter scoring. Your ONLY job: incorporate missing terms naturally to push the score above ${targetScore}%. Preserve all existing content. Output PURE HTML ONLY.`,
+              temperature: 0.6 + (attempt * 0.05),
+              maxTokens: 16384
             });
-            
-            if (improvedResult.content && improvedResult.content.length > currentContent.length * 0.8) {
+
+            if (improvedResult.content && improvedResult.content.length > currentContent.length * 0.75) {
               currentContent = improvedResult.content;
             }
           } else {
-            // No specific suggestions - try a general keyword density improvement
-            this.log(`No specific missing terms found - attempting general keyword optimization...`);
-            
-            const generalPrompt = `This article needs better keyword optimization for SEO. 
-Improve it by:
-1. Adding more variations of the primary topic throughout
-2. Including related terms and synonyms
-3. Strengthening the keyword presence in headings
-4. Adding more specific data points and statistics
+            this.log(`No missing terms found - attempting semantic enrichment...`);
 
-CRITICAL: OUTPUT PURE HTML ONLY - NO MARKDOWN!
-Use <h2>, <h3>, <p>, <ul>, <li>, <strong>, <em> tags
-NEVER use ## or ### or * or ** for formatting
+            const allTermsText = allTermsForSuggestions.map(t => t.term).join(', ');
+            const generalPrompt = `This article scores ${currentScore}% on NeuronWriter (target: ${targetScore}%+).
 
-Keep ALL existing content and ADD to it. Return the COMPLETE improved article in PURE HTML format.
+The key SEO terms for this topic are: ${allTermsText}
+
+Improve the article by:
+1. Increasing the frequency of underused terms (add 1-2 more natural mentions of each)
+2. Adding semantic variations and synonyms
+3. Expanding thin sections with more detail
+4. Adding a new FAQ question that uses key terms
+5. Adding a "Key Takeaway" or "Pro Tip" box that uses core terms
+
+OUTPUT PURE HTML ONLY. Preserve all existing content. Return the COMPLETE article.
 
 CURRENT ARTICLE:
 ${currentContent}`;
 
             const improvedResult = await this.engine.generateWithModel({
-              prompt: generalPrompt + `\n\n[Improvement attempt ${attempt + 1} of ${maxImprovementAttempts}]`,
+              prompt: generalPrompt,
               model: this.config.primaryModel || 'gemini',
               apiKeys: this.config.apiKeys,
-              systemPrompt: 'You are an expert SEO content optimizer. Output PURE HTML ONLY.',
-              temperature: 0.6 + (attempt * 0.1)
+              systemPrompt: 'Elite SEO optimizer. Output PURE HTML ONLY.',
+              temperature: 0.65,
+              maxTokens: 16384
             });
-            
-            if (improvedResult.content && improvedResult.content.length > currentContent.length * 0.8) {
+
+            if (improvedResult.content && improvedResult.content.length > currentContent.length * 0.75) {
               currentContent = improvedResult.content;
             }
           }
         } else {
-          // Fallback: local approximation
           neuron.analysis.content_score = neuron.service.calculateContentScore(
             currentContent,
             neuron.analysis.terms || []

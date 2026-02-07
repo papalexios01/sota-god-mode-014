@@ -103,21 +103,40 @@ export class NeuronWriterService {
     return `${projectId.trim()}::${keyword.toLowerCase().trim()}`;
   }
 
-  private getEdgeFunctionUrl(): string | null {
+  private getProxyEndpoints(): Array<{ url: string; headers: Record<string, string>; label: string }> {
+    const endpoints: Array<{ url: string; headers: Record<string, string>; label: string }> = [];
+
+    // 1. Supabase Edge Function (if configured)
     try {
       const supabaseUrl = (import.meta as any).env?.VITE_SUPABASE_URL;
-      if (supabaseUrl) return `${supabaseUrl}/functions/v1/neuronwriter-proxy`;
+      if (supabaseUrl && supabaseUrl.includes('.supabase.')) {
+        const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+        const anonKey = (import.meta as any).env?.VITE_SUPABASE_ANON_KEY;
+        if (anonKey) headers['Authorization'] = `Bearer ${anonKey}`;
+        endpoints.push({
+          url: `${supabaseUrl}/functions/v1/neuronwriter-proxy`,
+          headers,
+          label: 'edge',
+        });
+      }
     } catch {}
-    return null;
-  }
 
-  private getEdgeFunctionHeaders(): Record<string, string> {
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-    try {
-      const anonKey = (import.meta as any).env?.VITE_SUPABASE_ANON_KEY;
-      if (anonKey) headers['Authorization'] = `Bearer ${anonKey}`;
-    } catch {}
-    return headers;
+    // 2. Serverless function - works on both Cloudflare Pages (/functions/api/neuronwriter.ts)
+    //    and Vercel (/api/neuronwriter.ts)
+    endpoints.push({
+      url: '/api/neuronwriter',
+      headers: { 'Content-Type': 'application/json' },
+      label: 'serverless',
+    });
+
+    // 3. Express dev server proxy (local dev only)
+    endpoints.push({
+      url: '/api/neuronwriter-proxy',
+      headers: { 'Content-Type': 'application/json' },
+      label: 'express',
+    });
+
+    return endpoints;
   }
 
   private async makeRequest<T>(
@@ -126,14 +145,69 @@ export class NeuronWriterService {
     body?: Record<string, unknown>
   ): Promise<{ success: boolean; data?: T; error?: string }> {
     const payload = JSON.stringify({ endpoint, method, apiKey: this.apiKey, body });
+    const proxyEndpoints = this.getProxyEndpoints();
 
-    const edgeUrl = this.getEdgeFunctionUrl();
-    if (edgeUrl) {
-      const result = await this.executeProxyRequest<T>(edgeUrl, this.getEdgeFunctionHeaders(), payload, 'edge');
-      if (result.success || result.error !== '__fallback__') return result;
+    let lastError = 'All proxy endpoints failed';
+
+    for (const proxy of proxyEndpoints) {
+      const result = await this.executeProxyRequest<T>(proxy.url, proxy.headers, payload, proxy.label);
+      if (result.success || (result.error && result.error !== '__fallback__')) {
+        return result;
+      }
+      if (result.error && result.error !== '__fallback__') {
+        lastError = result.error;
+      }
     }
 
-    return this.executeProxyRequest<T>('/api/neuronwriter-proxy', { 'Content-Type': 'application/json' }, payload, 'express');
+    // 4. Last resort: direct API call (may fail due to CORS but worth trying)
+    return this.executeDirectApiCall<T>(endpoint, method, body);
+  }
+
+  private async executeDirectApiCall<T>(
+    endpoint: string,
+    method: string,
+    body?: Record<string, unknown>
+  ): Promise<{ success: boolean; data?: T; error?: string }> {
+    const NEURON_API_BASE = 'https://app.neuronwriter.com/neuron-api/0.5/writer';
+    try {
+      console.log(`[NeuronWriter] direct API call: ${endpoint}`);
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 30000);
+
+      const fetchOptions: RequestInit = {
+        method,
+        headers: {
+          'X-API-KEY': this.apiKey,
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+        },
+        signal: controller.signal,
+      };
+
+      if (body && (method === 'POST' || method === 'PUT')) {
+        fetchOptions.body = JSON.stringify(body);
+      }
+
+      const response = await fetch(`${NEURON_API_BASE}${endpoint}`, fetchOptions);
+      clearTimeout(timeoutId);
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        return { success: false, error: `NeuronWriter API error: ${response.status}` };
+      }
+
+      return { success: true, data: data as T };
+    } catch (error) {
+      console.error('[NeuronWriter] direct API call failed:', error);
+      if (error instanceof Error && error.name === 'AbortError') {
+        return { success: false, error: 'Request timed out.' };
+      }
+      return {
+        success: false,
+        error: 'All proxy endpoints failed and direct API call was blocked by CORS. Please check your deployment configuration.',
+      };
+    }
   }
 
   private async executeProxyRequest<T>(
@@ -157,15 +231,23 @@ export class NeuronWriterService {
 
       clearTimeout(timeoutId);
 
+      if (response.status === 405 || response.status === 404) {
+        console.warn(`[NeuronWriter] ${label} returned ${response.status}, falling back`);
+        return { success: false, error: '__fallback__' };
+      }
+
+      const contentType = response.headers.get('content-type') || '';
+      if (!contentType.includes('application/json')) {
+        console.warn(`[NeuronWriter] ${label} returned non-JSON (${contentType}), falling back`);
+        return { success: false, error: '__fallback__' };
+      }
+
       let result: any;
       try {
         result = await response.json();
       } catch {
-        if (label === 'edge') {
-          console.warn(`[NeuronWriter] Edge function returned non-JSON (${response.status}), falling back to express`);
-          return { success: false, error: '__fallback__' };
-        }
-        return { success: false, error: `Proxy returned invalid response (HTTP ${response.status})` };
+        console.warn(`[NeuronWriter] ${label} returned unparseable JSON (${response.status}), falling back`);
+        return { success: false, error: '__fallback__' };
       }
 
       if (!result.success) {
@@ -181,17 +263,8 @@ export class NeuronWriterService {
       return { success: true, data: result.data as T };
     } catch (error) {
       console.error(`[NeuronWriter] ${label} proxy error:`, error);
-      if (label === 'edge') {
-        console.warn('[NeuronWriter] Edge function failed, falling back to express');
-        return { success: false, error: '__fallback__' };
-      }
-      if (error instanceof Error && error.name === 'AbortError') {
-        return { success: false, error: 'Request timed out. The NeuronWriter API may be slow - try again.' };
-      }
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Network error - check your connection'
-      };
+      console.warn(`[NeuronWriter] ${label} failed, falling back to next proxy`);
+      return { success: false, error: '__fallback__' };
     }
   }
 

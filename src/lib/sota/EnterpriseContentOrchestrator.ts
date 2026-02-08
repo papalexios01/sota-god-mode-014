@@ -576,8 +576,8 @@ Now continue:`;
       this.log('NeuronWriter: evaluating content score...');
       let currentContent = enhancedContent;
       let currentScore = 0;
-      const targetScore = 80;
-      const maxImprovementAttempts = 2;
+      const targetScore = 92;
+      const maxImprovementAttempts = 4;
 
       const allTermsForSuggestions = [
         ...neuron.analysis.terms,

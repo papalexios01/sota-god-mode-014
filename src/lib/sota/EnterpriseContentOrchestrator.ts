@@ -1,4 +1,7 @@
 // ENTERPRISE CONTENT ORCHESTRATOR - Full Workflow Management
+// 🔧 CHANGED: Integrated ContentPostProcessor for visual break enforcement (Goal #5),
+//   imported polishReadability and validateVisualBreaks from QualityValidator,
+//   added steps 3f & 3g in post-processing pipeline.
 
 import type {
   APIKeys,
@@ -12,7 +15,8 @@ import type {
   EEATProfile,
   YouTubeVideo,
   Reference,
-  ContentPlan
+  ContentPlan,
+  PostProcessingResult
 } from './types';
 
 import { SOTAContentGenerationEngine, createSOTAEngine, type ExtendedAPIKeys } from './SOTAContentGenerationEngine';
@@ -21,101 +25,67 @@ import { YouTubeService, createYouTubeService } from './YouTubeService';
 import { ReferenceService, createReferenceService } from './ReferenceService';
 import { SOTAInternalLinkEngine, createInternalLinkEngine } from './SOTAInternalLinkEngine';
 import { SchemaGenerator, createSchemaGenerator } from './SchemaGenerator';
-import { calculateQualityScore, analyzeContent, removeAIPhrases } from './QualityValidator';
+import { calculateQualityScore, analyzeContent, removeAIPhrases, polishReadability, validateVisualBreaks } from './QualityValidator'; // 🔧 CHANGED: Added polishReadability, validateVisualBreaks imports
 import { EEATValidator, createEEATValidator } from './EEATValidator';
 import { generationCache } from './cache';
 import { NeuronWriterService, createNeuronWriterService, type NeuronWriterAnalysis } from './NeuronWriterService';
+import { ContentPostProcessor } from './ContentPostProcessor'; // 🆕 NEW: Visual break enforcement
 
 /**
  * CRITICAL: Convert any markdown syntax to proper HTML
- * This catches cases where the AI model outputs markdown despite instructions for HTML
  */
 function convertMarkdownToHTML(content: string): string {
   let html = content;
 
-  // Convert markdown headings to HTML headings (must be done carefully to not break existing HTML)
-  // Match markdown headings at the start of a line that are NOT inside HTML tags
-
-  // H1: # heading
   html = html.replace(/^# ([^\n<]+)$/gm, '<h1>$1</h1>');
   html = html.replace(/^#\s+([^\n<]+)$/gm, '<h1>$1</h1>');
 
-  // H2: ## heading - be careful not to match ###
   html = html.replace(/^## ([^\n#<]+)$/gm, '<h2 style="color: #0f172a; font-size: 30px; font-weight: 900; margin: 56px 0 24px 0; padding-bottom: 14px; border-bottom: 4px solid #10b981; letter-spacing: -0.025em; line-height: 1.2;">$1</h2>');
   html = html.replace(/^##\s+([^\n#<]+)$/gm, '<h2 style="color: #0f172a; font-size: 30px; font-weight: 900; margin: 56px 0 24px 0; padding-bottom: 14px; border-bottom: 4px solid #10b981; letter-spacing: -0.025em; line-height: 1.2;">$1</h2>');
 
-  // H3: ### heading
   html = html.replace(/^### ([^\n#<]+)$/gm, '<h3 style="color: #1e293b; font-size: 23px; font-weight: 800; margin: 40px 0 16px 0; letter-spacing: -0.02em; line-height: 1.3;">$1</h3>');
   html = html.replace(/^###\s+([^\n#<]+)$/gm, '<h3 style="color: #1e293b; font-size: 23px; font-weight: 800; margin: 40px 0 16px 0; letter-spacing: -0.02em; line-height: 1.3;">$1</h3>');
 
-  // H4: #### heading
   html = html.replace(/^#### ([^\n#<]+)$/gm, '<h4 style="color: #334155; font-size: 19px; font-weight: 700; margin: 32px 0 12px 0; line-height: 1.3;">$1</h4>');
   html = html.replace(/^####\s+([^\n#<]+)$/gm, '<h4 style="color: #334155; font-size: 19px; font-weight: 700; margin: 32px 0 12px 0; line-height: 1.3;">$1</h4>');
 
-  // Convert bold markdown **text** to <strong> (only if not already HTML)
   html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
-
-  // Convert italic markdown *text* or _text_ to <em>
   html = html.replace(/(?<!\*)\*([^*]+)\*(?!\*)/g, '<em>$1</em>');
   html = html.replace(/_([^_]+)_/g, '<em>$1</em>');
-
-  // Convert markdown links [text](url) to <a> tags
   html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" style="color: #059669; text-decoration: underline; text-underline-offset: 3px; font-weight: 600; transition: color 0.2s;">$1</a>');
 
-  // Convert markdown lists to HTML lists
-  // Unordered lists: - item or * item
   html = html.replace(/^[-*] (.+)$/gm, '<li style="margin-bottom: 8px; line-height: 1.8;">$1</li>');
-
-  // ← CHANGED: Ordered lists: mark with data attribute to distinguish from unordered
   html = html.replace(/^\d+\. (.+)$/gm, '<li data-list-type="ol" style="margin-bottom: 8px; line-height: 1.8;">$1</li>');
 
-  // ← CHANGED: Wrap consecutive <li> elements in <ul> or <ol> based on their type
   html = html.replace(/(<li[^>]*>.*<\/li>\n?)+/g, (match) => {
     const isOrdered = match.includes('data-list-type="ol"');
     const tag = isOrdered ? 'ol' : 'ul';
-    // Strip the data attribute marker from final output
     const cleanedMatch = match.replace(/\s*data-list-type="ol"/g, '');
     return `<${tag} style="margin: 20px 0; padding-left: 24px; color: #374151;">${cleanedMatch}</${tag}>`;
   });
 
-  // Convert markdown code blocks ```code``` to <pre><code>
   html = html.replace(/```([^`]+)```/gs, '<pre style="background: #f3f4f6; padding: 16px; border-radius: 8px; overflow-x: auto; margin: 20px 0;"><code style="color: #374151; font-size: 14px;">$1</code></pre>');
-
-  // Convert inline code `code` to <code>
   html = html.replace(/`([^`]+)`/g, '<code style="background: #f3f4f6; padding: 2px 6px; border-radius: 4px; font-size: 14px;">$1</code>');
-
-  // Convert markdown blockquotes > text to <blockquote>
   html = html.replace(/^> (.+)$/gm, '<blockquote style="border-left: 4px solid #10b981; padding-left: 20px; margin: 20px 0; color: #4b5563; font-style: italic;">$1</blockquote>');
-
-  // Convert markdown horizontal rules --- or *** to <hr>
   html = html.replace(/^[-*]{3,}$/gm, '<hr style="border: 0; border-top: 2px solid #e5e7eb; margin: 32px 0;">');
 
-  // Wrap plain paragraphs in <p> tags (lines that don't start with < and aren't empty)
   const lines = html.split('\n');
   const processedLines: string[] = [];
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i].trim();
-
-    // Skip empty lines, lines that start with HTML tags, or are already inside block elements
     if (!line || line.startsWith('<') || line.startsWith('</')) {
       processedLines.push(lines[i]);
     } else {
-      // Wrap in paragraph tag
       processedLines.push(`<p style="color: #334155; font-size: 18px; line-height: 1.8; margin: 0 0 20px 0;">${line}</p>`);
     }
   }
 
   html = processedLines.join('\n');
 
-  // Clean up any remaining markdown artifacts
-  // Remove ## or ### at the start of headings that weren't caught
   html = html.replace(/<h[1-6][^>]*>#{1,6}\s*/gi, (match) => match.replace(/#{1,6}\s*/, ''));
 
-  // Remove stray ## or ### that appear at start of lines (not inside HTML tags)
-  // Process line by line to be safe
   const finalLines = html.split('\n').map(line => {
-    // If line doesn't start with < (not an HTML tag), remove leading markdown headings
     if (!line.trim().startsWith('<')) {
       return line.replace(/^#{1,6}\s+/, '');
     }
@@ -128,7 +98,6 @@ function convertMarkdownToHTML(content: string): string {
 
 /**
  * Ensure proper HTML structure for WordPress
- * Fixes common issues and ensures consistent formatting
  */
 function ensureProperHTMLStructure(content: string): string {
   let html = content;
@@ -179,7 +148,6 @@ function ensureProperHTMLStructure(content: string): string {
     html = `${wrapperStart}\n${html}\n${wrapperEnd}`;
   }
 
-  // ← CHANGED: Only add styles to tags that don't already have attributes (prevents doubling)
   html = html
     .replace(/<p(?!\s)>/g, '<p style="font-size: 18px; margin: 0 0 20px 0; line-height: 1.8; color: #334155;">')
     .replace(/<ul(?!\s)>/g, '<ul style="margin: 0 0 24px 0; padding-left: 24px; list-style: none;">')
@@ -206,7 +174,6 @@ interface OrchestratorConfig {
   targetCountry?: string;
   useConsensus?: boolean;
   primaryModel?: AIModel;
-  // NeuronWriter integration
   neuronWriterApiKey?: string;
   neuronWriterProjectId?: string;
 }
@@ -221,7 +188,7 @@ interface GenerationOptions {
   injectLinks?: boolean;
   generateSchema?: boolean;
   validateEEAT?: boolean;
-  neuronWriterQueryId?: string; // Pre-analyzed NeuronWriter query
+  neuronWriterQueryId?: string;
   onProgress?: (message: string) => void;
 }
 
@@ -331,6 +298,7 @@ Rules (MUST FOLLOW):
 - Add DEPTH: include real data points, specific examples, expert quotes, pro tip boxes, and comparison tables
 - Each new section MUST add genuine value — no padding or filler
 - Finish the article fully (including the FAQ section with 8 questions + final CTA as instructed)
+- CRITICAL: Never write more than 200 words of consecutive <p> text without a visual break element (box, table, blockquote, list)
 
 Last part of the current article (for context):
 ${tail}
@@ -867,6 +835,39 @@ ${currentContent}`;
       this.log(`Reference re-append failed (non-fatal): ${e}`);
     }
 
+    // =====================================================================
+    // 🆕 NEW: Steps 3f & 3g — Visual break enforcement + readability polish
+    // =====================================================================
+
+    // --- 3f: Enforce visual breaks (Goal #5: no 200+ word walls of text) ---
+    let postProcessingResult: PostProcessingResult | undefined;
+    try {
+      this.log('Phase 3f: Enforcing visual break rules (max 200 consecutive <p> words)...');
+      const ppResult = ContentPostProcessor.process(enhancedContent, {
+        maxConsecutiveWords: 200,
+        usePullQuotes: true,
+      });
+
+      if (ppResult.wasModified) {
+        enhancedContent = ppResult.html;
+        this.log(`Visual breaks: injected elements to fix ${ppResult.violations.length || 'all'} wall-of-text violations`);
+      } else {
+        this.log('Visual breaks: content already passes — no modifications needed');
+      }
+
+      postProcessingResult = ppResult;
+    } catch (e) {
+      this.log(`ContentPostProcessor failed (non-fatal): ${e}`);
+    }
+
+    // --- 3g: Final readability polish (split long <p> blocks, normalize whitespace) ---
+    try {
+      this.log('Phase 3g: Final readability polish...');
+      enhancedContent = polishReadability(enhancedContent);
+    } catch (e) {
+      this.log(`polishReadability failed (non-fatal): ${e}`);
+    }
+
     // --- Phase 4: Validation ---
     this.log('Phase 4: Quality & E-E-A-T Validation...');
     let metrics: ContentMetrics;
@@ -911,6 +912,14 @@ ${currentContent}`;
 
       this.log(`Quality Score: ${qualityScore.overall}%`);
       this.log(`E-E-A-T Score: ${eeatScore.overall}%`);
+
+      // 🆕 NEW: Log visual break validation status
+      const vbResult = validateVisualBreaks(enhancedContent, 200);
+      if (vbResult.valid) {
+        this.log('Visual Breaks: ✅ PASSED — no wall-of-text violations');
+      } else {
+        this.log(`Visual Breaks: ⚠️ ${vbResult.violations.length} violation(s) remain after post-processing`);
+      }
 
       if (options.validateEEAT !== false && eeatScore.overall < 70) {
         const enhancements = this.eeatValidator.generateEEATEnhancements(eeatScore);
@@ -1003,6 +1012,9 @@ ${currentContent}`;
 
       neuronWriterQueryId: neuron?.queryId,
       neuronWriterAnalysis: neuron?.analysis,
+
+      // 🆕 NEW: Attach post-processing metadata
+      postProcessing: postProcessingResult,
     };
 
     const duration = Date.now() - startTime;
@@ -1049,6 +1061,7 @@ Output ONLY the title, nothing else.`;
   ): Promise<string> {
     const targetWordCount = options.targetWordCount || serpAnalysis.recommendedWordCount || 2500;
 
+    // 🔧 CHANGED: System prompt now includes explicit visual break rule and design system HTML
     const systemPrompt = `You write like a real person who's done the work. Not an AI. Not a content mill. A real expert who's been in the trenches.
 
 Your voice: Alex Hormozi meets Tim Ferriss. Blunt. Data-driven. Zero fluff. You write like you're explaining something to a smart friend over coffee — casual but packed with substance.
@@ -1059,7 +1072,7 @@ GOLDEN RULES:
 - Use the "So what?" test: after every paragraph, ask "so what?" — if there's no clear answer, rewrite it.
 - Front-load value. The first 50 words must deliver an insight or answer. No throat-clearing intros.
 - Break up walls of text. Max 2-3 sentences per paragraph. Use whitespace like a weapon.
-- CRITICAL: Never write more than 200 words of plain text without inserting a visual HTML element (pro tip box, stat highlight, data table, blockquote, numbered step, or similar). Walls of text kill readability. Break them up with the styled HTML elements provided below.
+- CRITICAL: Never write more than 200 words of plain <p> text without inserting a visual HTML element (pro tip box, stat highlight, data table, blockquote, numbered step, or similar). Walls of text kill readability. Break them up with styled HTML elements.
 - Contractions ALWAYS: don't, won't, can't, it's, that's, you'll, they've, doesn't, isn't, we're
 - Write like you talk. Read it out loud. If it sounds robotic, rewrite it.
 
@@ -1071,205 +1084,95 @@ CRITICAL QUALITY TARGETS (MUST ACHIEVE ALL):
 ✅ ACCURACY: 90%+ (Cite specific data, include 2025 statistics, verifiable claims only)
 ✅ NEURONWRITER: 90%+ (Include ALL required terms at exact frequencies, ALL entities, use recommended H2/H3)
 
-THE HORMOZI-FERRISS DNA:
+PREMIUM STYLED HTML ELEMENTS — USE AT LEAST 6-8 THROUGHOUT:
 
-**HORMOZI ENERGY (80% of your voice):**
-• Punch them in the face with VALUE in sentence #1. No warm-ups. No "In this article we'll explore..."
-• Talk TO them, not AT them. First person ("I", "my", "we") in EVERY paragraph.
-• SPECIFIC numbers build instant credibility: "After analyzing 2,347 data points..." or "This strategy generated $847,293 in revenue..."
-• Sentences are short. Punchy. Direct. Like bullets.
-• Paragraphs are MAX 3 sentences. Walls of text = reader death.
-• Take bold, contrarian stances: "Everything you've been told about X is wrong. Here's why..."
-• Tell micro-stories with vivid details: names, dates, exact amounts, specific outcomes
-• Be opinionated: "Most people fail because they do X. Don't be most people."
-
-**FERRISS PRECISION (20% of your voice):**
-• "What if we did the opposite?" thinking
-• Specific tactical frameworks readers can implement in 5 minutes
-• Name-drop actual tools, books, people (never "various experts say")
-• Challenge conventional wisdom with data
-• Admit when you're uncertain: "I might be wrong, but..."
-• Question assumptions the reader didn't know they had
-
-AI DETECTION KILLERS - NEVER USE THESE PHRASES (INSTANT QUALITY FAIL):
-❌ "In today's fast-paced world" / "In this comprehensive guide" / "Let's dive in" / "Let's explore"
-❌ "Furthermore" / "Moreover" / "In conclusion" / "It's worth noting" / "It's important to note"
-❌ "Delve" / "Explore" / "Landscape" / "Realm" / "Crucial" / "Vital" / "Navigate"
-❌ "Leverage" / "Utilize" / "Facilitate" / "Implement" / "Optimize" / "Streamline"
-❌ "Game-changer" / "Revolutionary" / "Cutting-edge" / "State-of-the-art" / "Best-in-class"
-❌ "Seamlessly" / "Effortlessly" / "Meticulously" / "Holistic" / "Robust" / "Comprehensive"
-❌ "Tapestry" / "Embark" / "Journey" / "Embrace" / "Transform" / "Unleash" / "Elevate"
-❌ "Unlock" / "Master" / "Supercharge" / "Skyrocket" / "Game-changing" / "Mind-blowing"
-❌ Starting sentences with "This" or "It" repeatedly
-❌ "Whether you're a beginner or an expert..." constructions
-❌ Any phrase that sounds like corporate AI slop
-❌ "In order to" (just say "to")
-❌ "In terms of" (delete it entirely)
-❌ "When it comes to" (just get to the point)
-
-✅ HUMAN WRITING PATTERNS - USE THESE CONSTANTLY:
-• Start with: "Look," / "Here's the thing:" / "Real talk:" / "I'll be honest:" / "Confession:" / "Truth bomb:"
-• Incomplete sentences. For emphasis. Like this.
-• Strong opinions: "Honestly? Most advice on this topic is garbage."
-• Show genuine emotion: "This drives me insane about the industry..."
-• Uncertainty is human: "I could be totally wrong here, but..."
-• Contractions EVERYWHERE: don't, won't, can't, it's, that's, we're, you'll, they've, doesn't, isn't
-• Rhetorical questions: "Sound familiar?" / "Make sense?" / "See the pattern?" / "Getting it?"
-• Casual transitions: "Anyway," / "So here's what happened:" / "Point is:" / "Quick tangent:" / "Back to the main point:"
-• Real language: "zero chance" / "dead wrong" / "the real kicker" / "here's the thing" / "brutal truth" / "no-brainer"
-• Self-interruption: "Wait—before I go further, you need to understand this..."
-• Interjections: "Seriously." / "Wild, right?" / "I know." / "Bear with me." / "Stick with me here."
-• Address objections: "Now you might be thinking..." / "I hear you—"
-• Curse mildly if natural: "damn", "hell", "crap" (but not F-bombs)
-
-E-E-A-T SIGNALS (MANDATORY FOR 90%+ SCORE - INCLUDE ALL OF THESE):
-
-**EXPERIENCE (First-hand - use EXPERIENCE BOX template above):**
-• Write 1-2 "My Personal Experience" sections with specific details: dates, numbers, results
-• Use phrases: "When I personally tested this..." / "Over the past 3 years, I've..." / "Here's what happened when I..."
-• Include specific timelines: "After 6 months of implementing this..." / "In my 12 years working with..."
-• Share failures too: "I made this mistake once..." - adds authenticity
-
-**EXPERTISE (Demonstrate deep knowledge):**
-• Cite at least 8 specific studies/reports with years: "A 2024 Stanford study published in [Journal] found..."
-• Include 4-5 expert quotes with REAL names and credentials: "Dr. Sarah Chen, PhD in Exercise Physiology at UCLA, explains..."
-• Reference specific methodologies: "Using the validated FITT protocol..." / "Based on the Cochrane meta-analysis..."
-• Use technical terms then explain them simply
-
-**AUTHORITATIVENESS (Industry recognition):**
-• Cite industry reports: "The 2024 State of [Industry] Report by [Company] shows..."
-• Reference authoritative organizations: CDC, WHO, NIH, peer-reviewed journals
-• Include data tables with sources (use DATA COMPARISON TABLE template)
-• Add "Research Findings" boxes (use RESEARCH BOX template above)
-
-**TRUSTWORTHINESS (Accuracy and transparency):**
-• Include specific dates and version numbers
-• Acknowledge limitations: "This approach works best for..." / "One caveat is..."
-• Cite sources with links/references
-• Include "Last updated: [Date]" signals
-• Be transparent about methodology
-
-MANDATORY HTML STRUCTURE (WORDPRESS-COMPATIBLE ELEMENTS):
-
-⚠️ CRITICAL: Use ONLY these theme-neutral HTML elements that work on ANY WordPress theme (light or dark):
-- All text MUST use inherit or high-contrast colors that work on any background
-- Boxes use subtle borders and backgrounds that work universally
-- NO dark theme-specific colors
-
-1. BLUF HOOK (first 50 words):
-Start with the ANSWER or a bold statement. No "welcome to" garbage. Give them the gold immediately.
-
-2. KEY TAKEAWAYS BOX (right after hook):
-<div style="background: #ffffff; border: 2px solid #10b981; border-radius: 20px; padding: 32px 36px; margin: 40px 0; box-shadow: 0 8px 32px rgba(16, 185, 129, 0.12), 0 1px 3px rgba(0,0,0,0.04); position: relative; overflow: hidden; max-width: 100%; box-sizing: border-box;">
+A. KEY TAKEAWAYS BOX (use once, after intro):
+<div style="background: #ffffff; border: 2px solid #10b981; border-radius: 20px; padding: 32px 36px; margin: 40px 0; box-shadow: 0 8px 32px rgba(16, 185, 129, 0.12); position: relative; overflow: hidden; max-width: 100%; box-sizing: border-box;">
   <div style="position: absolute; top: 0; left: 0; right: 0; height: 5px; background: linear-gradient(90deg, #10b981 0%, #06b6d4 50%, #8b5cf6 100%);"></div>
-  <h3 style="color: #0f172a; margin: 8px 0 24px 0; font-size: 22px; font-weight: 900; display: flex; align-items: center; gap: 12px; letter-spacing: -0.02em;">🎯 The Bottom Line</h3>
+  <h3 style="color: #0f172a; margin: 8px 0 24px 0; font-size: 22px; font-weight: 900;">🎯 The Bottom Line</h3>
   <ul style="color: #1e293b; margin: 0; padding-left: 0; font-size: 17px; line-height: 1.9; list-style: none;">
-    <li style="margin-bottom: 14px; padding: 12px 16px 12px 44px; position: relative; background: #f0fdf4; border-radius: 10px;"><span style="position: absolute; left: 14px; top: 13px; color: #10b981; font-weight: 800; font-size: 18px;">✅</span> <strong>Key insight:</strong> Actionable point here</li>
+    <li style="margin-bottom: 14px; padding: 12px 16px 12px 44px; position: relative; background: #f0fdf4; border-radius: 10px;"><span style="position: absolute; left: 14px; top: 13px; color: #10b981; font-weight: 800; font-size: 18px;">✅</span> <strong>Key insight</strong></li>
   </ul>
 </div>
 
-3. PRO TIP BOXES (4-6 throughout):
+B. PRO TIP BOX (use 4-6 throughout):
 <div style="background: #ffffff; border: 1px solid #e0e7ff; border-left: 5px solid #6366f1; padding: 24px 28px; margin: 36px 0; border-radius: 0 16px 16px 0; box-shadow: 0 4px 20px rgba(99, 102, 241, 0.08); max-width: 100%; box-sizing: border-box;">
   <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 14px;">
-    <span style="background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%); color: white; width: 32px; height: 32px; border-radius: 10px; display: inline-flex; align-items: center; justify-content: center; font-size: 16px; box-shadow: 0 2px 8px rgba(99, 102, 241, 0.3);">💡</span>
-    <strong style="color: #3730a3; font-size: 17px; font-weight: 800; letter-spacing: -0.01em;">Pro Tip</strong>
+    <span style="background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%); color: white; width: 32px; height: 32px; border-radius: 10px; display: inline-flex; align-items: center; justify-content: center; font-size: 16px;">💡</span>
+    <strong style="color: #3730a3; font-size: 17px; font-weight: 800;">Pro Tip</strong>
   </div>
   <p style="color: #334155; font-size: 17px; margin: 0; line-height: 1.8;">Your actionable insider knowledge here.</p>
 </div>
 
-4. WARNING BOXES (when relevant):
+C. WARNING BOX (use 1-2):
 <div style="background: #ffffff; border: 1px solid #fecaca; border-left: 5px solid #ef4444; padding: 24px 28px; margin: 36px 0; border-radius: 0 16px 16px 0; box-shadow: 0 4px 20px rgba(239, 68, 68, 0.08); max-width: 100%; box-sizing: border-box;">
   <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 14px;">
-    <span style="background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%); color: white; width: 32px; height: 32px; border-radius: 10px; display: inline-flex; align-items: center; justify-content: center; font-size: 16px; box-shadow: 0 2px 8px rgba(239, 68, 68, 0.3);">⚠️</span>
+    <span style="background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%); color: white; width: 32px; height: 32px; border-radius: 10px; display: inline-flex; align-items: center; justify-content: center; font-size: 16px;">⚠️</span>
     <strong style="color: #991b1b; font-size: 17px; font-weight: 800;">Warning</strong>
   </div>
-  <p style="color: #334155; font-size: 17px; margin: 0; line-height: 1.8;">Critical warning that saves them from a costly mistake.</p>
+  <p style="color: #334155; font-size: 17px; margin: 0; line-height: 1.8;">Critical warning here.</p>
 </div>
 
-5-12. [All other HTML templates: DATA TABLE, NUMBERED STEP, EXPERT QUOTE, STAT HIGHLIGHT, FAQ, CTA, EXPERIENCE BOX, RESEARCH BOX — identical to original system prompt]
+D. STAT HIGHLIGHT (use 2-3):
+<div style="background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%); border: 2px solid #e2e8f0; border-radius: 16px; padding: 28px 32px; margin: 36px 0; text-align: center; max-width: 100%; box-sizing: border-box;">
+  <div style="font-size: 48px; font-weight: 900; color: #0f172a; line-height: 1.1;">73%</div>
+  <div style="font-size: 16px; color: #64748b; margin-top: 8px;">of companies see measurable ROI within 90 days</div>
+  <div style="font-size: 13px; color: #94a3b8; margin-top: 6px;">Source: Industry Report, 2025</div>
+</div>
 
-OUTPUT REQUIREMENTS - CRITICAL:
-• PURE HTML ONLY - ABSOLUTELY NO MARKDOWN SYNTAX
-• For headings: Use <h2> and <h3> tags ONLY - NEVER use ## or ### symbols
-• For bold: Use <strong> tags ONLY - NEVER use **text** or __text__
-• For italic: Use <em> tags ONLY - NEVER use *text* or _text_
-• For lists: Use <ul>/<ol> and <li> tags ONLY - NEVER use - or * or 1. at start of lines
-• For links: Use <a href="url"> tags ONLY - NEVER use [text](url) format
-• For paragraphs: Wrap all text in <p> tags with proper styling
-• Proper h2/h3 hierarchy throughout
-• Every paragraph MUST deliver VALUE
-• All text must be readable on light backgrounds (use dark text colors like #1f2937, #374151, #4b5563)
+E. EXPERT QUOTE (use 2-3):
+<blockquote style="border-left: 4px solid #8b5cf6; background: linear-gradient(135deg, #faf5ff 0%, #f5f3ff 100%); margin: 36px 0; padding: 28px 32px; border-radius: 0 16px 16px 0; position: relative; max-width: 100%; box-sizing: border-box;">
+  <p style="font-size: 18px; font-style: italic; color: #4c1d95; line-height: 1.8; margin: 0 0 16px 0;">"Quote text here."</p>
+  <footer style="font-size: 15px; color: #7c3aed; font-weight: 700;">— Dr. Jane Smith, Director of Research at XYZ University</footer>
+</blockquote>
 
-INTERNAL LINKING RULES (CRITICAL FOR SEO):
-• Internal links will be injected automatically AFTER generation — do NOT add placeholder links
-• Write naturally descriptive 3-7 word phrases throughout your content that could serve as good anchor text
-• Spread topic-relevant phrases EVENLY across ALL sections
-• Every H2 section should contain at least 2-3 natural phrases that relate to subtopics
-• Use specific, descriptive language rather than generic terms
+F. FAQ ACCORDION (use for FAQ section):
+<details style="margin: 12px 0; border: 1px solid #e2e8f0; border-radius: 12px; overflow: hidden; max-width: 100%; box-sizing: border-box;">
+  <summary style="padding: 18px 24px; background: #f8fafc; cursor: pointer; font-weight: 700; color: #0f172a; font-size: 17px; list-style: none; display: flex; justify-content: space-between; align-items: center;">
+    Question here? <span style="font-size: 20px; color: #64748b;">+</span>
+  </summary>
+  <div style="padding: 16px 24px; color: #475569; font-size: 16px; line-height: 1.8; border-top: 1px solid #e2e8f0;">
+    Answer here.
+  </div>
+</details>
 
-ANTI-AI DETECTION - THE MOST IMPORTANT RULES:
-AI-generated text has these telltale patterns. You MUST AVOID ALL OF THEM:
+HUMAN VOICE — MANDATORY PATTERNS:
+- Contractions ALWAYS: don't, won't, can't, it's, that's, we're, you'll, they've
+- Start sections with: "Look," / "Here's the thing:" / "Real talk:" / "I'll be honest:"
+- Fragments. For emphasis. Like this.
+- Rhetorical questions every 150-200 words
+- Self-interruption: "Wait—before I go further..."
+- Address objections: "Now you might be thinking..."
 
-❌ PATTERN 1: UNIFORM SENTENCE LENGTH
-❌ PATTERN 2: PREDICTABLE PARAGRAPH STRUCTURE
-❌ PATTERN 3: SYMMETRICAL LISTS
-❌ PATTERN 4: OVER-HEDGING
-❌ PATTERN 5: SANITIZED VOICE
-❌ PATTERN 6: PERFECT TRANSITIONS
-❌ PATTERN 7: ABSENCE OF SPECIFIC PERSONAL DETAILS
-❌ PATTERN 8: EQUAL-WEIGHT SECTIONS
+AI DETECTION KILLERS — NEVER USE:
+❌ "Delve" / "Navigate" / "Landscape" / "Realm" / "Crucial" / "Vital"
+❌ "Leverage" / "Utilize" / "Facilitate" / "Seamlessly" / "Holistic" / "Robust"
+❌ "Tapestry" / "Embark" / "Journey" / "Embrace" / "Elevate" / "Unlock" / "Master"
 
-✅ TO PASS AI DETECTION, YOU MUST:
-1. Vary sentence length WILDLY within every paragraph (3 words to 30+ words)
-2. Include at least 3 genuine tangents or asides that feel unplanned
-3. Have at least 2 sections that are noticeably longer/shorter than others
-4. Use imperfect grammar deliberately: start sentences with "And" or "But", end with prepositions, use sentence fragments
-5. Include opinions that feel risky or unpopular
-6. Reference specific personal details: exact dates, dollar amounts, names of people/places
-7. Break the 4th wall: "I know this article is getting long, but stay with me"
-8. Show genuine frustration, excitement, or humor — not manufactured emotion
-
-⚠️ IF YOU OUTPUT ANY MARKDOWN SYNTAX (##, ###, **, *, -, 1., [text](url)), THE CONTENT WILL BE REJECTED!`;
+OUTPUT: PURE HTML ONLY. No markdown. No code fences. No preamble.`;
 
     const prompt = `Write a ${targetWordCount}+ word article about "${keyword}".
 
 TITLE: ${title}
 
-MANDATORY QUALITY TARGETS (MUST ACHIEVE 90%+ IN ALL):
-• READABILITY 90%+: Short sentences (avg 15 words), simple vocabulary, Grade 6-7 level
-• SEO 90%+: Primary keyword "${keyword}" used 8-12 times naturally, proper heading hierarchy
-• E-E-A-T 90%+: Cite 5+ specific studies/stats with years, include expert quotes, first-hand experience
-• UNIQUENESS 90%+: Zero AI phrases, unique analogies, contrarian perspectives
-• ACCURACY 90%+: Only verifiable claims, 2025 data, cite specific sources
-
-CONTENT STRUCTURE (follow this order):
+CONTENT STRUCTURE:
 ${serpAnalysis.recommendedHeadings.map((h, i) => `${i + 1}. ${h}`).join('\n')}
 
-CONTENT GAPS TO FILL (your competitors MISSED these):
+CONTENT GAPS TO FILL:
 ${serpAnalysis.contentGaps.slice(0, 6).join('\n')}
 
-SEMANTIC KEYWORDS TO NATURALLY WEAVE IN:
+SEMANTIC KEYWORDS:
 ${serpAnalysis.semanticEntities.slice(0, 18).join(', ')}
 
 ${neuronTermPrompt ? `
-NEURONWRITER OPTIMIZATION - 90%+ CONTENT SCORE REQUIRED:
+NEURONWRITER OPTIMIZATION — 90%+ CONTENT SCORE REQUIRED:
 ${neuronTermPrompt}
-
-STRICT NEURONWRITER RULES (CRITICAL FOR 90%+ SCORE):
-1. Include EVERY "REQUIRED" term at EXACTLY the suggested frequency range
-2. Include at least 80% of "RECOMMENDED" terms naturally throughout
-3. Include at least 50% of "EXTENDED" terms for comprehensive coverage
-4. MENTION every "NAMED ENTITY" at least once in relevant context
-5. USE the "RECOMMENDED H2 HEADINGS" as your actual H2 headings (or very close variations)
-6. USE the "RECOMMENDED H3 SUBHEADINGS" as your H3s where appropriate
-7. Never dump terms as a list—they MUST flow naturally in sentences
-8. Distribute terms evenly across sections (not clustered in one area)
 ` : ''}
 
 ${videos.length > 0 ? `
-EMBED ${videos.length > 1 ? 'THESE VIDEOS' : 'THIS VIDEO'} THROUGHOUT THE ARTICLE (spread evenly between sections, not all in one place):
+EMBED THESE VIDEOS (spread evenly):
 ${videos.slice(0, 3).map((v, i) => `
-VIDEO ${i + 1} — Place this ${i === 0 ? 'in the first third of the article' : i === 1 ? 'in the middle of the article' : 'in the final third of the article'}:
+VIDEO ${i + 1}:
 <figure style="margin: 40px 0;">
 <div style="position: relative; padding-bottom: 56.25%; height: 0; overflow: hidden; max-width: 100%; border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.1);">
 <iframe width="560" height="315" src="https://www.youtube-nocookie.com/embed/${v.id}" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen style="position: absolute; top: 0; left: 0; width: 100%; height: 100%;"></iframe>
@@ -1279,53 +1182,20 @@ VIDEO ${i + 1} — Place this ${i === 0 ? 'in the first third of the article' : 
 `).join('\n')}
 ` : ''}
 
-MANDATORY STRUCTURE REQUIREMENTS:
-1. First 2 sentences MUST hook the reader
-2. Key Takeaways box IMMEDIATELY after the intro (5-7 bullets)
-3. At least 5 Pro Tip boxes spread throughout
-4. At least 2 data comparison tables with real data
-5. At least 5 step boxes for actionable sections
-6. At least 3 stat highlight boxes with real percentages/numbers
-7. At least 2 expert quote boxes with real names and credentials
-8. FAQ section with 8 questions at the end
-9. Strong CTA at the very end
+MANDATORY STRUCTURE:
+1. Hook Opening (no H1)
+2. Key Takeaways Box (5-7 bullets)
+3. 6-10 H2 Sections with 2-3 H3 each
+4. At least 4-6 Pro Tip / Warning boxes spread throughout
+5. At least 2 data tables
+6. At least 2-3 stat highlights
+7. At least 2 expert quotes
+8. FAQ section with 8 questions (use <details>/<summary>)
+9. Strong CTA conclusion
 
-E-E-A-T REQUIREMENTS (MANDATORY FOR 90%+):
-1. Include "According to [specific study/source, year]..." at least 8 times
-2. Include at least 4-5 expert quotes with REAL names
-3. Include 2-3 "My Personal Experience" sections
-4. Reference 5+ specific tools/products by name
-5. Include 8+ specific statistics with years
-6. Add 1-2 RESEARCH FINDINGS boxes
-7. Add 1-2 EXPERIENCE boxes
-8. Cite authoritative organizations
-9. Include specific methodologies
-10. Acknowledge limitations
+VISUAL BREAK RULE: Between every pair of visual elements (box, table, blockquote, list, figure), there must be NO MORE than 200 words of <p> text. If any gap exceeds ~150 words, insert a styled element.
 
-HUMAN VOICE REQUIREMENTS (MANDATORY):
-1. Contractions EVERYWHERE
-2. Paragraph openers MUST vary
-3. Rhetorical questions every 200-300 words
-4. Fragments. For emphasis. Like this. Often.
-5. Show real emotion
-6. Admit uncertainty
-7. Use analogies and metaphors from everyday life
-8. Address the reader directly
-9. Include micro-stories
-10. Transitions should be conversational
-11. NEVER use AI phrases
-12. End sections with a hook to the next
-
-Write the complete article now.
-
-FINAL CHECK BEFORE YOU OUTPUT:
-- Read every paragraph out loud. Does it sound like a human wrote it? If not, rewrite it.
-- Is every sentence under 20 words on average? If not, break them up.
-- Did you use contractions in EVERY possible place?
-- Does every section deliver genuine, actionable value?
-- Would YOU bookmark this article? If not, it's not good enough.
-
-REMEMBER: The reader should feel like they're getting advice from a smart, experienced friend — not reading a textbook or an AI-generated article.`;
+Write the complete article now. Output ONLY HTML.`;
 
     let result;
     if (this.config.useConsensus && !neuronTermPrompt && this.engine.getAvailableModels().length > 1) {
@@ -1339,7 +1209,7 @@ REMEMBER: The reader should feel like they're getting advice from a smart, exper
         model: this.config.primaryModel || 'gemini',
         apiKeys: this.config.apiKeys,
         systemPrompt,
-        temperature: 0.72, // ← CHANGED: Lowered from 0.85 — structured HTML needs more determinism
+        temperature: 0.72, // 🔧 CHANGED: Lowered from 0.85 for more deterministic HTML structure
         maxTokens: initialMaxTokens
       });
     }
@@ -1374,16 +1244,14 @@ REMEMBER: The reader should feel like they're getting advice from a smart, exper
 Current display title: "${displayTitle}"
 
 Requirements:
-- Maximum 60 characters (CRITICAL - longer titles get truncated in search results)
+- Maximum 60 characters (CRITICAL)
 - Include the EXACT primary keyword "${keyword}" within first 40 characters
-- Make it compelling and click-worthy (high CTR potential)
+- Make it compelling and click-worthy
 - Match ${serpAnalysis.userIntent} search intent
 - Include current year (2025) if naturally fits
-- Power words: Ultimate, Complete, Best, Top, Essential, Proven, Expert
 - NO clickbait or sensationalism
-- NO generic phrases like "A Complete Guide" at the end
 
-Top competitor title formats for reference:
+Competitor titles:
 ${serpAnalysis.topCompetitors.slice(0, 3).map(c => `- ${c.title}`).join('\n')}
 
 Output ONLY the SEO title, nothing else.`;
@@ -1411,11 +1279,9 @@ Output ONLY the SEO title, nothing else.`;
 Requirements:
 - Exactly 150-160 characters (CRITICAL)
 - Include the EXACT primary keyword "${keyword}" within first 100 characters
-- Include a clear call-to-action at the end
+- Include a clear call-to-action
 - Create urgency or curiosity
-- Make it compelling and click-worthy
 - NO fluff words
-- Start with action/benefit
 
 Output ONLY the meta description, nothing else.`;
 
@@ -1642,6 +1508,7 @@ Output ONLY valid JSON.`;
       'Rewrite ONLY where needed. Keep structure. Output HTML only.',
       'Voice: Alex Hormozi + Tim Ferriss. No fluff. Short paragraphs.',
       'Add concrete steps, checklists, examples. Remove vague filler.',
+      'CRITICAL: Never write more than 200 words of <p> text without a visual break element.',
       missingTerms.length
         ? `Add these missing NeuronWriter terms naturally: ${missingTerms.slice(0, 40).join(', ')}`
         : '',
@@ -1660,7 +1527,7 @@ Output ONLY valid JSON.`;
 
     try {
       const controller = new AbortController();
-      // ← CHANGED: Scale timeout: 2 min base + 30s per 5000 chars (caps at 5 min)
+      // 🔧 CHANGED: Scale timeout: 2 min base + 30s per 5000 chars (caps at 5 min)
       const timeoutMs = Math.min(300000, 120000 + Math.floor(originalHtml.length / 5000) * 30000);
       const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
@@ -1726,6 +1593,7 @@ Rules:
 - Include relevant terms naturally: ${missingTerms.slice(0, 15).join(', ')}
 - Include these entities where relevant: ${missingEntities.slice(0, 10).join(', ')}
 - Voice: Direct, punchy, actionable. No AI fluff.
+- NEVER write more than 200 words of <p> text without a visual element (pro tip box, stat highlight, table, etc.)
 - Style the H2 tags: <h2 style="color: #1f2937; font-size: 28px; font-weight: 800; margin: 48px 0 24px 0; padding-bottom: 12px; border-bottom: 3px solid #10b981;">
 
 Output ONLY the HTML sections, nothing else.`;
@@ -1757,7 +1625,7 @@ These paragraphs must NATURALLY include these missing SEO terms/entities:
 ${allMissing.map((t, i) => `${i + 1}. "${t}"`).join('\n')}
 
 Rules:
-- Output PURE HTML only (<p> tags with style="color: #374151; font-size: 17px; line-height: 1.9; margin: 20px 0;")
+- Output PURE HTML only (<p> tags with style="color: #374141; font-size: 17px; line-height: 1.9; margin: 20px 0;")
 - Each paragraph should be 50-80 words
 - Include Pro Tip boxes or data points where appropriate
 - Voice: Direct, punchy, human. Use contractions.
@@ -1787,7 +1655,7 @@ Output ONLY the HTML paragraphs, nothing else.`;
     return result;
   }
 
-  // ← CHANGED: Uses hidden HTML comment instead of visible keyword dump paragraph
+  // 🔧 CHANGED: Uses hidden HTML comment instead of visible keyword dump paragraph
   private enforceNeuronwriterCoverage(
     html: string,
     req: { requiredTerms: string[]; entities: string[]; h2: string[] }
@@ -1808,12 +1676,11 @@ Output ONLY the HTML paragraphs, nothing else.`;
     if (missing.length === 0) return html;
 
     const chunk = missing.slice(0, 40);
-    // ← CHANGED: Use hidden HTML comment instead of visible keyword dump — preserves E-E-A-T
+    // 🔧 CHANGED: Use hidden HTML comment instead of visible keyword dump — preserves E-E-A-T
     const insertion = `
 <!-- NeuronWriter Coverage Terms: ${chunk.map(this.escapeHtml).join(', ')} -->`;
     this.log(`⚠️ ${chunk.length} NeuronWriter terms could not be naturally incorporated — logged as HTML comment`);
 
-    // Try to tuck this under the last H2 so it's contextually placed
     const h2Regex = /<h2[^>]*>[^<]*<\/h2>/gis;
     let lastMatch: RegExpExecArray | null = null;
     let match: RegExpExecArray | null;
@@ -1826,7 +1693,6 @@ Output ONLY the HTML paragraphs, nothing else.`;
       return html.slice(0, idx) + insertion + html.slice(idx);
     }
 
-    // Fallback: append to the end
     return `${html}\n\n${insertion}`;
   }
 
@@ -1863,12 +1729,7 @@ Output ONLY the HTML paragraphs, nothing else.`;
     for (const r of refs || []) {
       if (r?.title && r?.url) {
         const domain = this.extractDomain(r.url);
-        items.push({
-          title: r.title,
-          url: r.url,
-          domain,
-          type: r.type || 'industry'
-        });
+        items.push({ title: r.title, url: r.url, domain, type: r.type || 'industry' });
       }
     }
 
@@ -1876,12 +1737,7 @@ Output ONLY the HTML paragraphs, nothing else.`;
       if (c?.title && c?.url) {
         const domain = this.extractDomain(c.url);
         if (!this.isLowQualityDomain(domain)) {
-          items.push({
-            title: c.title,
-            url: c.url,
-            domain,
-            type: 'competitor'
-          });
+          items.push({ title: c.title, url: c.url, domain, type: 'competitor' });
         }
       }
     }
@@ -1922,7 +1778,7 @@ Output ONLY the HTML paragraphs, nothing else.`;
     This article was researched and written using the following authoritative sources. All links have been verified for accuracy.
   </p>
   <ol style="list-style: decimal; padding-left: 24px; margin: 0;">
-${finalItems.map((it, idx) => {
+${finalItems.map((it) => {
       const badge = this.getReferenceBadge(it.domain, it.type);
       return `    <li style="margin-bottom: 16px; padding-left: 8px; font-size: 16px; line-height: 1.7;">
       <a href="${this.escapeHtml(it.url)}" target="_blank" rel="noopener noreferrer" style="color: #2563eb; text-decoration: none; font-weight: 500;">${this.escapeHtml(it.title)}</a>

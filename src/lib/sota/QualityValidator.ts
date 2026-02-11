@@ -1,6 +1,8 @@
 // QUALITY VALIDATOR - Multi-Layer Content Validation
+// 🔧 CHANGED: Added visual break validation, wall-of-text detection,
+//             tighter scoring baselines, and polishReadability enhancements
 
-import type { QualityScore, ContentMetrics } from './types';
+import type { QualityScore, ContentMetrics, WallOfTextViolation, VisualBreakValidationResult } from './types';
 
 // AI trigger phrases to detect and remove
 const AI_TRIGGER_PHRASES = [
@@ -10,7 +12,6 @@ const AI_TRIGGER_PHRASES = [
   'in this article',
   'this article will',
   'we will explore',
-
   'in conclusion',
   'it\'s important to note',
   'it is worth noting',
@@ -50,6 +51,14 @@ const AI_TRIGGER_PHRASES = [
   'utilize'
 ];
 
+// 🆕 NEW: Block-level tags that count as "visual breaks" for the 200-word rule
+const VISUAL_BREAK_TAGS = new Set([
+  'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
+  'blockquote', 'table', 'ul', 'ol',
+  'figure', 'img', 'hr', 'div',
+  'details', 'aside', 'section', 'pre',
+]);
+
 function countSyllables(word: string): number {
   word = word.toLowerCase().trim().replace(/[^a-z]/g, '');
   if (!word) return 0;
@@ -75,44 +84,109 @@ function countSyllables(word: string): number {
 function calculateFleschKincaid(text: string): number {
   const sentences = text.split(/[.!?]+/).filter(s => s.trim().length > 0);
   const words = text.split(/\s+/).filter(w => w.length > 0);
-  
+
   if (sentences.length === 0 || words.length === 0) return 0;
-  
+
   const totalSyllables = words.reduce((sum, word) => sum + countSyllables(word), 0);
-  
+
   const avgWordsPerSentence = words.length / sentences.length;
   const avgSyllablesPerWord = totalSyllables / words.length;
-  
-  // Flesch-Kincaid Grade Level
+
   return 0.39 * avgWordsPerSentence + 11.8 * avgSyllablesPerWord - 15.59;
 }
 
+// =====================================================================
+// 🆕 NEW: Visual Break Validation (Goal #5)
+// =====================================================================
+
+/**
+ * Count words in a string after stripping HTML tags.
+ */
+function countWordsInText(text: string): number {
+  return text.replace(/<[^>]*>/g, '').split(/\s+/).filter(Boolean).length;
+}
+
+/**
+ * Validate that HTML content has no more than `maxConsecutiveWords` of
+ * paragraph text without a visual break element in between.
+ *
+ * @param html - The HTML content to validate
+ * @param maxConsecutiveWords - Maximum words allowed between breaks (default: 200)
+ * @returns Validation result with any violations found
+ */
+export function validateVisualBreaks(
+  html: string,
+  maxConsecutiveWords: number = 200,
+): VisualBreakValidationResult {
+  const violations: WallOfTextViolation[] = [];
+
+  // Parse block-level elements in order
+  const blockRegex = /(<(?:p|h[1-6]|div|blockquote|table|ul|ol|li|figure|figcaption|section|article|aside|details|summary|pre|hr|img)[^>]*>[\s\S]*?<\/(?:p|h[1-6]|div|blockquote|table|ul|ol|li|figure|figcaption|section|article|aside|details|summary|pre)>|<(?:hr|img)[^>]*\/?>)/gi;
+
+  interface HtmlBlock {
+    tag: string;
+    html: string;
+    wordCount: number;
+  }
+
+  const blocks: HtmlBlock[] = [];
+  let match: RegExpExecArray | null;
+
+  while ((match = blockRegex.exec(html)) !== null) {
+    const raw = match[0];
+    const tagMatch = raw.match(/^<(\w+)/);
+    const tag = tagMatch ? tagMatch[1].toLowerCase() : 'p';
+    blocks.push({ tag, html: raw, wordCount: countWordsInText(raw) });
+  }
+
+  let consecutiveWords = 0;
+  let runStartIndex = -1;
+
+  for (let i = 0; i < blocks.length; i++) {
+    const block = blocks[i];
+    const isVisualBreak = VISUAL_BREAK_TAGS.has(block.tag) && block.tag !== 'p';
+
+    if (isVisualBreak) {
+      if (consecutiveWords > maxConsecutiveWords && runStartIndex >= 0) {
+        violations.push({ blockIndex: runStartIndex, wordCount: consecutiveWords });
+      }
+      consecutiveWords = 0;
+      runStartIndex = -1;
+    } else {
+      if (runStartIndex === -1) runStartIndex = i;
+      consecutiveWords += block.wordCount;
+    }
+  }
+
+  // Check trailing run
+  if (consecutiveWords > maxConsecutiveWords && runStartIndex >= 0) {
+    violations.push({ blockIndex: runStartIndex, wordCount: consecutiveWords });
+  }
+
+  return { valid: violations.length === 0, violations };
+}
+
+// =====================================================================
+// Content Analysis
+// =====================================================================
+
 export function analyzeContent(content: string): ContentMetrics {
-  // Strip HTML tags for text analysis
   const textContent = content.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
-  
+
   const words = textContent.split(/\s+/).filter(w => w.length > 0);
   const sentences = textContent.split(/[.!?]+/).filter(s => s.trim().length > 0);
   const paragraphs = content.split(/<\/p>|<br\s*\/?>\s*<br\s*\/?>/gi).filter(p => p.trim().length > 0);
-  
-  // Count headings
+
   const h1Count = (content.match(/<h1[^>]*>/gi) || []).length;
   const h2Count = (content.match(/<h2[^>]*>/gi) || []).length;
   const h3Count = (content.match(/<h3[^>]*>/gi) || []).length;
   const headingCount = h1Count + h2Count + h3Count;
-  
-  // Count images
+
   const imageCount = (content.match(/<img[^>]*>/gi) || []).length;
-  
-  // Count links
   const linkCount = (content.match(/<a[^>]*href/gi) || []).length;
-  
-  // Calculate readability
   const readabilityGrade = calculateFleschKincaid(textContent);
-  
-  // Estimated read time (average 200 words per minute)
   const estimatedReadTime = Math.ceil(words.length / 200);
-  
+
   return {
     wordCount: words.length,
     sentenceCount: sentences.length,
@@ -120,7 +194,7 @@ export function analyzeContent(content: string): ContentMetrics {
     headingCount,
     imageCount,
     linkCount,
-    keywordDensity: 0, // Calculate separately with keyword
+    keywordDensity: 0,
     readabilityGrade,
     estimatedReadTime
   };
@@ -167,6 +241,9 @@ export function calculateQualityScore(
 
   const improvements: string[] = [];
 
+  // 🆕 NEW: Visual break validation (Goal #5)
+  const visualBreakResult = validateVisualBreaks(content, 200);
+
   // --- READABILITY (0-100) ---
   const readabilityScore = (() => {
     let score = 0;
@@ -196,7 +273,17 @@ export function calculateQualityScore(
     const hasQuestions = /\?/.test(textContent);
     if (hasQuestions) score += 7;
 
-    return Math.min(100, score);
+    // 🆕 NEW: Penalize wall-of-text violations (Goal #5)
+    if (!visualBreakResult.valid) {
+      const violationCount = visualBreakResult.violations.length;
+      const penalty = Math.min(20, violationCount * 7); // -7 per violation, max -20
+      score -= penalty;
+      improvements.push(
+        `${violationCount} wall-of-text violation(s) found: consecutive paragraphs exceed 200 words without a visual break element`
+      );
+    }
+
+    return Math.min(100, Math.max(0, score));
   })();
 
   // --- SEO (0-100) ---
@@ -230,8 +317,7 @@ export function calculateQualityScore(
 
   // --- E-E-A-T (0-100) ---
   const eeatScore = (() => {
-    let score = 15; // CHANGED: Lowered from 40 — must earn E-E-A-T signals
-
+    let score = 15; // 🔧 CHANGED: Lowered from 40 — must earn E-E-A-T signals
 
     const citationMatches = contentLower.match(/according to|study\b|research\b|report\b|published|journal|university|institute/g);
     const citationCount = citationMatches?.length || 0;
@@ -262,13 +348,21 @@ export function calculateQualityScore(
     else if (aiPhrases.length <= 2) score += 2;
     else score -= aiPhrases.length;
 
+    // 🆕 NEW: Bonus for rich visual elements (Goal #4 — encourages better design)
+    const hasStyledBoxes = (content.match(/border-left:\s*\d+px\s+solid/gi) || []).length;
+    const hasTables = (content.match(/<table/gi) || []).length;
+    const hasBlockquotes = (content.match(/<blockquote/gi) || []).length;
+    const visualRichness = hasStyledBoxes + hasTables + hasBlockquotes;
+    if (visualRichness >= 8) score += 10;
+    else if (visualRichness >= 4) score += 6;
+    else if (visualRichness >= 2) score += 3;
+
     return Math.min(100, Math.max(0, score));
   })();
 
   // --- UNIQUENESS (0-100) ---
   const uniquenessScore = (() => {
-    let score = 30; // CHANGED: Lowered from 85 — must demonstrate genuine uniqueness
-
+    let score = 30; // 🔧 CHANGED: Lowered from 85 — must demonstrate genuine uniqueness
 
     score -= aiPhrases.length * 4;
     if (aiPhrases.length > 0) {
@@ -284,12 +378,32 @@ export function calculateQualityScore(
     const hasShortSentences = textContent.split(/[.!?]/).filter(s => s.trim().split(/\s+/).length <= 5 && s.trim().length > 0).length;
     if (hasShortSentences >= 5) score += 4;
 
-        return Math.min(100, Math.max(20, score)); // CHANGED: Floor lowered from 60 to 20
+    // 🆕 NEW: Bonus for sentence-length variation (anti-AI-detection signal)
+    const sentences = textContent.split(/[.!?]+/).filter(s => s.trim().length > 0);
+    if (sentences.length >= 10) {
+      const lengths = sentences.map(s => s.trim().split(/\s+/).length);
+      const avg = lengths.reduce((a, b) => a + b, 0) / lengths.length;
+      const variance = lengths.reduce((sum, l) => sum + Math.pow(l - avg, 2), 0) / lengths.length;
+      const stdDev = Math.sqrt(variance);
+      // High variation → more human-like
+      if (stdDev >= 8) score += 10;
+      else if (stdDev >= 5) score += 6;
+      else if (stdDev >= 3) score += 3;
+    }
+
+    // 🆕 NEW: Bonus for contractions density (human writing signal)
+    const contractionMatches = textContent.match(/\b\w+n't\b|\b\w+'re\b|\b\w+'ve\b|\b\w+'ll\b|\b\w+'s\b|\b\w+'d\b|\b\w+'m\b/gi);
+    const contractionCount = contractionMatches?.length || 0;
+    const contractionDensity = metrics.wordCount > 0 ? (contractionCount / metrics.wordCount) * 100 : 0;
+    if (contractionDensity >= 1.5) score += 8;
+    else if (contractionDensity >= 0.8) score += 4;
+
+    return Math.min(100, Math.max(20, score)); // 🔧 CHANGED: Floor lowered from 60 to 20
   })();
 
-    // --- FACT ACCURACY (0-100) ---
+  // --- FACT ACCURACY (0-100) ---
   const factAccuracyScore = (() => {
-    let score = 25; // CHANGED: Lowered from 72 — must include verifiable facts
+    let score = 25; // 🔧 CHANGED: Lowered from 72 — must include verifiable facts
 
     const statMatches = content.match(/\d+(?:\.\d+)?%|\d+(?:,\d{3})+|\d+\s*(?:million|billion|thousand)/g);
     const statCount = statMatches?.length || 0;
@@ -304,6 +418,12 @@ export function calculateQualityScore(
 
     const hasSourceNames = /\b(?:harvard|stanford|mit|oxford|mayo clinic|cdc|who|nih|fda|gartner|mckinsey|forrester|statista|pew research)\b/i.test(textContent);
     if (hasSourceNames) score += 8;
+
+    // 🆕 NEW: Bonus for structured data (tables with numbers = verifiable claims)
+    const tableWithData = /<table[\s\S]*?\d+[\s\S]*?<\/table>/gi;
+    const dataTableCount = (content.match(tableWithData) || []).length;
+    if (dataTableCount >= 2) score += 10;
+    else if (dataTableCount >= 1) score += 5;
 
     return Math.min(100, score);
   })();
@@ -332,14 +452,9 @@ export function calculateQualityScore(
 export function removeAIPhrases(content: string): string {
   let cleaned = content;
 
-  // Remove common AI-tells with light contextual safety:
-  // - remove as standalone phrases / transitions
-  // - avoid nuking substrings inside words
   for (const phrase of AI_TRIGGER_PHRASES) {
     const escaped = phrase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-
-    // Match phrase with optional punctuation and surrounding whitespace
-    const regex = new RegExp(`(^|[\s>])(${escaped})([\s,.:;!?)<]|$)`, 'gi');
+    const regex = new RegExp(`(^|[\\s>])(${escaped})([\\s,.:;!?)<]|$)`, 'gi');
     cleaned = cleaned.replace(regex, (_m, p1, _p2, p3) => `${p1}${p3}`);
   }
 
@@ -354,12 +469,12 @@ export function removeAIPhrases(content: string): string {
   return cleaned.trim();
 }
 
-
-
 /**
  * Final cheap polish: ensures scannability for WordPress HTML.
  * - collapses long paragraphs
  * - standardizes spacing
+ * 🔧 CHANGED: Enhanced to also normalize excessive <br> runs and apply
+ *   paragraph splitting at a tighter 70-word threshold.
  */
 export function polishReadability(html: string): string {
   let out = html;
@@ -367,10 +482,10 @@ export function polishReadability(html: string): string {
   out = out.replace(/(<br\s*\/?>\s*){3,}/gi, '<br><br>');
   out = out.replace(/\n{3,}/g, '\n\n');
 
-  // Split overly long <p> blocks
-  out = out.replace(/<p>([\s\S]*?)<\/p>/gi, (m, inner) => {
+  // Split overly long <p> blocks (70 words max)
+  out = out.replace(/<p([^>]*)>([\s\S]*?)<\/p>/gi, (m, attrs, inner) => {
     const plain = inner.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
-    if (plain.split(' ').length <= 75) return m;
+    if (plain.split(' ').length <= 70) return m;
 
     const sentences = inner.split(/(?<=[.!?])\s+/);
     let cur = '';
@@ -378,15 +493,15 @@ export function polishReadability(html: string): string {
     for (const s of sentences) {
       const next = (cur ? cur + ' ' : '') + s;
       const wc = next.replace(/<[^>]+>/g, ' ').split(/\s+/).filter(Boolean).length;
-      if (wc > 70 && cur) {
-        paras.push(`<p>${cur.trim()}</p>`);
+      if (wc > 65 && cur) {
+        paras.push(`<p${attrs}>${cur.trim()}</p>`);
         cur = s;
       } else {
         cur = next;
       }
     }
-    if (cur.trim()) paras.push(`<p>${cur.trim()}</p>`);
-    return paras.join('');
+    if (cur.trim()) paras.push(`<p${attrs}>${cur.trim()}</p>`);
+    return paras.join('\n');
   });
 
   return out;

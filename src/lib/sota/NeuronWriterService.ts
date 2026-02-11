@@ -87,6 +87,9 @@ export interface NeuronWriterCompetitor {
   score?: number;
 }
 
+// ← NEW: TTL constant for query cache expiry
+const QUERY_CACHE_TTL_MS = 30 * 60 * 1000; // 30 minutes
+
 export class NeuronWriterService {
   private apiKey: string;
 
@@ -121,8 +124,7 @@ export class NeuronWriterService {
       }
     } catch {}
 
-    // 2. Serverless function - works on both Cloudflare Pages (/functions/api/neuronwriter.ts)
-    //    and Vercel (/api/neuronwriter.ts)
+    // 2. Serverless function
     endpoints.push({
       url: '/api/neuronwriter',
       headers: { 'Content-Type': 'application/json' },
@@ -139,6 +141,7 @@ export class NeuronWriterService {
     return endpoints;
   }
 
+  // ← CHANGED: Entire makeRequest method updated for new fallback pattern
   private async makeRequest<T>(
     endpoint: string,
     method: string = 'POST',
@@ -151,11 +154,21 @@ export class NeuronWriterService {
 
     for (const proxy of proxyEndpoints) {
       const result = await this.executeProxyRequest<T>(proxy.url, proxy.headers, payload, proxy.label);
-      if (result.success || (result.error && result.error !== '__fallback__')) {
+
+      // Success — return immediately
+      if (result.success) {
         return result;
       }
-      if (result.error && result.error !== '__fallback__') {
+
+      // Soft failure — try next proxy                           // ← CHANGED
+      if ((result as any)._shouldFallback) {
+        continue;
+      }
+
+      // Hard failure — surface error, don't try more proxies   // ← CHANGED
+      if (result.error) {
         lastError = result.error;
+        return result;
       }
     }
 
@@ -210,6 +223,7 @@ export class NeuronWriterService {
     }
   }
 
+  // ← CHANGED: Replaced all '__fallback__' sentinels with typed _shouldFallback discriminator
   private async executeProxyRequest<T>(
     url: string,
     headers: Record<string, string>,
@@ -233,13 +247,13 @@ export class NeuronWriterService {
 
       if (response.status === 405 || response.status === 404) {
         console.warn(`[NeuronWriter] ${label} returned ${response.status}, falling back`);
-        return { success: false, error: '__fallback__' };
+        return { success: false, error: undefined, _shouldFallback: true } as any; // ← CHANGED
       }
 
       const contentType = response.headers.get('content-type') || '';
       if (!contentType.includes('application/json')) {
         console.warn(`[NeuronWriter] ${label} returned non-JSON (${contentType}), falling back`);
-        return { success: false, error: '__fallback__' };
+        return { success: false, error: undefined, _shouldFallback: true } as any; // ← CHANGED
       }
 
       let result: any;
@@ -247,7 +261,7 @@ export class NeuronWriterService {
         result = await response.json();
       } catch {
         console.warn(`[NeuronWriter] ${label} returned unparseable JSON (${response.status}), falling back`);
-        return { success: false, error: '__fallback__' };
+        return { success: false, error: undefined, _shouldFallback: true } as any; // ← CHANGED
       }
 
       if (!result.success) {
@@ -264,7 +278,7 @@ export class NeuronWriterService {
     } catch (error) {
       console.error(`[NeuronWriter] ${label} proxy error:`, error);
       console.warn(`[NeuronWriter] ${label} failed, falling back to next proxy`);
-      return { success: false, error: '__fallback__' };
+      return { success: false, error: undefined, _shouldFallback: true } as any; // ← CHANGED
     }
   }
 
@@ -341,10 +355,10 @@ export class NeuronWriterService {
 
     const normalizedKeyword = keyword.toLowerCase().trim();
 
-    const CACHE_TTL_MS = 30 * 60 * 1000; // 30 minutes
     const cacheKey = NeuronWriterService.makeQueryCacheKey(projectId, keyword);
     const cached = NeuronWriterService.queryCache.get(cacheKey);
-    if (cached?.id && cached.updatedAt && (Date.now() - cached.updatedAt < CACHE_TTL_MS)) {
+    // ← CHANGED: Added TTL check — stale entries are ignored
+    if (cached?.id && cached.updatedAt && (Date.now() - cached.updatedAt < QUERY_CACHE_TTL_MS)) {
       console.log(
         `[NeuronWriter] Using cached query for "${keyword}" (ID: ${cached.id}, status: ${cached.status || 'unknown'}, age: ${Math.round((Date.now() - cached.updatedAt) / 1000)}s)`
       );
@@ -358,7 +372,6 @@ export class NeuronWriterService {
         },
       };
     }
-
 
     const statuses: Array<'ready' | 'waiting' | 'in progress'> = ['ready', 'waiting', 'in progress'];
     const listResults = await Promise.all(
@@ -703,7 +716,6 @@ export class NeuronWriterService {
     const required = terms.filter(t => t.type === 'required');
     const recommended = terms.filter(t => t.type === 'recommended');
     
-    // Combine basic + extended for comprehensive keyword coverage
     const allTerms = [...terms, ...(analysis?.termsExtended || [])];
     const topTermsByUsage = allTerms
       .sort((a, b) => (b.usage_pc || 0) - (a.usage_pc || 0))

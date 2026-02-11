@@ -1,23 +1,31 @@
-// SOTA CONTENT VIEWER PANEL - Enterprise-Grade Content Display
-// v2.0.0 - Fixed: cursor-aware insertion, publish uses edited content, auto-save
+// src/components/ContentViewerPanel.tsx
+// SOTA CONTENT VIEWER PANEL - Enterprise-Grade Content Display v3.0
+// Improvements: Structured NeuronWriter tab, enhanced internal links, beautiful design
 
-import { useState, useMemo, useCallback, useEffect, useRef } from 'react'; // 🔧 FIX: Added useRef
-import { 
-  X, Copy, Check, Download, ExternalLink, Sparkles, 
+import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
+import {
+  X, Copy, Check, Download, ExternalLink, Sparkles,
   FileText, Code, Search, BarChart3, Link2, Shield,
   ChevronLeft, ChevronRight, Maximize2, Minimize2,
   BookOpen, Clock, Target, Zap, Award, Eye, EyeOff,
   TrendingUp, CheckCircle, AlertTriangle, Brain, Globe,
   Hash, List, Type, ArrowRight, Upload, Loader2,
-  Edit3, Save, RotateCcw, Bold, Italic, Heading1, Heading2, Heading3, 
-  ListOrdered, Quote, Table, Image as ImageIcon, Undo, Redo
+  Edit3, Save, RotateCcw, Bold, Italic, Heading1, Heading2, Heading3,
+  ListOrdered, Quote, Table, Image as ImageIcon, Undo, Redo,
+  ChevronDown, ChevronUp, Filter, Tag, Layers, Layout
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { ContentItem } from '@/lib/store';
-import type { GeneratedContent, NeuronWriterAnalysis } from '@/lib/sota';
+import type { GeneratedContent } from '@/lib/sota';
+import type { NeuronWriterAnalysis, NeuronWriterTermData, NeuronWriterHeadingData } from '@/lib/sota/NeuronWriterService';
+import { scoreContentAgainstNeuron } from '@/lib/sota/NeuronWriterService';
 import { useWordPressPublish } from '@/hooks/useWordPressPublish';
 import { getPathnameFromUrl, getWordPressPostSlugFromUrl, toSafeWpSlug } from '@/lib/wordpress/slug';
 import { toast } from 'sonner';
+
+// ═══════════════════════════════════════════════════════════════════
+// SANITIZE & FORMAT HELPERS
+// ═══════════════════════════════════════════════════════════════════
 
 function sanitizeHtml(html: string): string {
   let sanitized = html;
@@ -36,7 +44,6 @@ function sanitizeHtml(html: string): string {
   return sanitized;
 }
 
-// 🔧 FIX: Helper function that was missing / truncated
 function formatHtml(html: string): string {
   return html
     .replace(/></g, '>\n<')
@@ -44,6 +51,10 @@ function formatHtml(html: string): string {
     .replace(/\n{3,}/g, '\n\n')
     .trim();
 }
+
+// ═══════════════════════════════════════════════════════════════════
+// TYPES
+// ═══════════════════════════════════════════════════════════════════
 
 interface ContentViewerPanelProps {
   item: ContentItem | null;
@@ -57,13 +68,17 @@ interface ContentViewerPanelProps {
   onSaveContent?: (itemId: string, newContent: string) => void;
 }
 
-type ViewTab = 'preview' | 'editor' | 'html' | 'seo' | 'schema' | 'links' | 'neuron';
+type ViewTab = 'preview' | 'editor' | 'html' | 'seo' | 'links' | 'schema' | 'neuron';
 
-export function ContentViewerPanel({ 
-  item, 
+// ═══════════════════════════════════════════════════════════════════
+// MAIN COMPONENT
+// ═══════════════════════════════════════════════════════════════════
+
+export function ContentViewerPanel({
+  item,
   generatedContent,
   neuronData,
-  onClose, 
+  onClose,
   onPrevious,
   onNext,
   hasPrevious,
@@ -76,8 +91,7 @@ export function ContentViewerPanel({
   const [showRawHtml, setShowRawHtml] = useState(false);
   const [showPublishModal, setShowPublishModal] = useState(false);
   const [publishStatus, setPublishStatus] = useState<'draft' | 'publish'>('draft');
-  
-  // 🔧 FIX: Added ref for cursor-aware insertion in editor textarea
+
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const { publish, isPublishing, publishResult, clearResult, isConfigured } = useWordPressPublish();
@@ -119,6 +133,12 @@ export function ContentViewerPanel({
     });
   }, [content]);
 
+  // NeuronWriter live scoring
+  const neuronLiveScore = useMemo(() => {
+    if (!neuronData) return null;
+    return scoreContentAgainstNeuron(content, neuronData);
+  }, [content, neuronData]);
+
   const handleCopy = async () => {
     await navigator.clipboard.writeText(content);
     setCopied(true);
@@ -135,31 +155,27 @@ export function ContentViewerPanel({
     URL.revokeObjectURL(url);
   };
 
-  // --- Editor state ---
+  // ─── Editor State ──────────────────────────────────────────────────
+
   const [editedContent, setEditedContent] = useState<string>('');
   const [isEditorDirty, setIsEditorDirty] = useState(false);
   const [editorHistory, setEditorHistory] = useState<string[]>([]);
   const [historyIndex, setHistoryIndex] = useState(-1);
 
-  // Initialize editor content when item changes
   useEffect(() => {
     if (!item?.id) return;
-    // 🔧 FIX: Restore from auto-save if available
     const autoSaveKey = `sota-editor-autosave-${item.id}`;
     const autoSaved = localStorage.getItem(autoSaveKey);
     const initialContent = autoSaved && autoSaved !== content ? autoSaved : content;
-
     setEditedContent(initialContent);
     setEditorHistory([initialContent]);
     setHistoryIndex(0);
     setIsEditorDirty(initialContent !== content);
-
     if (autoSaved && autoSaved !== content) {
       toast.info('Restored unsaved changes from auto-save');
     }
   }, [content, item?.id]);
 
-  // 🔧 FIX: Auto-save to localStorage (debounced 1.5s)
   useEffect(() => {
     if (!item?.id || !isEditorDirty) return;
     const key = `sota-editor-autosave-${item.id}`;
@@ -202,7 +218,6 @@ export function ContentViewerPanel({
     setIsEditorDirty(false);
     setEditorHistory([content]);
     setHistoryIndex(0);
-    // Clear auto-save
     if (item?.id) localStorage.removeItem(`sota-editor-autosave-${item.id}`);
     toast.info('Editor reset to original content');
   }, [content, item?.id]);
@@ -211,18 +226,16 @@ export function ContentViewerPanel({
     if (!item || !onSaveContent || !isEditorDirty) return;
     onSaveContent(item.id, editedContent);
     setIsEditorDirty(false);
-    // Clear auto-save after successful save
     if (item.id) localStorage.removeItem(`sota-editor-autosave-${item.id}`);
     toast.success('Content saved successfully!');
   }, [item, onSaveContent, isEditorDirty, editedContent]);
 
-  // 🔧 FIX: insertHtmlTag now uses textarea selectionStart/selectionEnd for cursor-aware insertion
   const insertHtmlTag = useCallback((tag: string, attributes: string = '') => {
     const textarea = textareaRef.current;
     const start = textarea ? textarea.selectionStart : editedContent.length;
     const end = textarea ? textarea.selectionEnd : editedContent.length;
     const selectedText = start !== end ? editedContent.substring(start, end) : 'Your text here';
-    
+
     let insertion = '';
     if (['h2', 'h3', 'p', 'strong', 'em', 'blockquote'].includes(tag)) {
       insertion = `<${tag}${attributes}>${selectedText}</${tag}>`;
@@ -234,11 +247,9 @@ export function ContentViewerPanel({
       insertion = `<img src="https://placehold.co/800x400" alt="${selectedText}" style="max-width: 100%; border-radius: 12px;" />`;
     }
 
-    // 🔧 FIX: Splice at cursor position instead of appending to end
     const newContent = editedContent.substring(0, start) + insertion + editedContent.substring(end);
     handleEditorChange(newContent);
 
-    // Restore cursor position after React re-render
     requestAnimationFrame(() => {
       if (textarea) {
         const newPos = start + insertion.length;
@@ -249,29 +260,25 @@ export function ContentViewerPanel({
     });
   }, [editedContent, handleEditorChange]);
 
-  // 🔧 FIX: Publish uses editedContent when editor is dirty
+  // ─── Publish Handler ───────────────────────────────────────────────
+
   const handlePublishToWordPress = async () => {
     if (!item) return;
-
-    const publishContent = isEditorDirty ? editedContent : content; // 🔧 FIX: use edited content if dirty
+    const publishContent = isEditorDirty ? editedContent : content;
     if (!publishContent) return;
 
     const cleanTitle = item.title.replace(/^\s*rewrite\s*:\s*/i, '').trim();
     const effectiveSeoTitle = generatedContent?.seoTitle || cleanTitle;
     const wpTitle = generatedContent?.seoTitle || generatedContent?.title || cleanTitle;
-    
-    const result = await publish(
-      wpTitle,
-      publishContent, // 🔧 FIX: was `content`, now uses publishContent
-      {
-        status: publishStatus,
-        slug: effectivePublishSlug,
-        metaDescription: generatedContent?.metaDescription,
-        excerpt: generatedContent?.metaDescription,
-        seoTitle: effectiveSeoTitle,
-        sourceUrl: item.url,
-      }
-    );
+
+    const result = await publish(wpTitle, publishContent, {
+      status: publishStatus,
+      slug: effectivePublishSlug,
+      metaDescription: generatedContent?.metaDescription,
+      excerpt: generatedContent?.metaDescription,
+      seoTitle: effectiveSeoTitle,
+      sourceUrl: item.url,
+    });
 
     if (result.success) {
       toast.success(`Published to WordPress as ${publishStatus}!`, {
@@ -282,12 +289,19 @@ export function ContentViewerPanel({
         } : undefined,
       });
       setShowPublishModal(false);
-      // Clear auto-save on successful publish
       if (item.id) localStorage.removeItem(`sota-editor-autosave-${item.id}`);
     } else {
       toast.error('Failed to publish', { description: result.error });
     }
   };
+
+  // ─── Tab Configuration ─────────────────────────────────────────────
+
+  const neuronTermCount = neuronData
+    ? (neuronData.basicKeywords?.length || 0) +
+      (neuronData.extendedKeywords?.length || 0) +
+      (neuronData.entities?.length || 0)
+    : (neuronData as any)?.terms?.length || 0;
 
   const tabs: { id: ViewTab; label: string; icon: React.ReactNode; badge?: number }[] = [
     { id: 'preview', label: 'Preview', icon: <Eye className="w-4 h-4" /> },
@@ -296,15 +310,19 @@ export function ContentViewerPanel({
     { id: 'seo', label: 'SEO Analysis', icon: <Search className="w-4 h-4" /> },
     { id: 'links', label: 'Internal Links', icon: <Link2 className="w-4 h-4" />, badge: generatedContent?.internalLinks?.length || contentLinks.length },
     { id: 'schema', label: 'Schema', icon: <Shield className="w-4 h-4" /> },
-    { id: 'neuron', label: 'NeuronWriter', icon: <Brain className="w-4 h-4" />, badge: neuronData?.terms?.length }
+    { id: 'neuron', label: 'NeuronWriter', icon: <Brain className="w-4 h-4" />, badge: neuronTermCount || undefined },
   ];
+
+  // ─── Effective display content (edited or original) ────────────────
+
+  const displayContent = isEditorDirty ? editedContent : content;
 
   return (
     <div className={cn(
       "fixed bg-background/98 backdrop-blur-xl z-50 flex flex-col",
       isFullscreen ? "inset-0" : "inset-4 rounded-2xl border border-border"
     )}>
-      {/* ===== HEADER ===== */}
+      {/* ═══════════════ HEADER ═══════════════ */}
       <div className="flex items-center justify-between p-4 border-b border-border bg-card/50">
         <div className="flex items-center gap-4">
           <div className="flex items-center gap-1">
@@ -336,6 +354,14 @@ export function ContentViewerPanel({
                   <span className="text-primary font-medium">{generatedContent.qualityScore.overall}% Quality</span>
                 </span>
               )}
+              {neuronLiveScore && (
+                <span className="flex items-center gap-1">
+                  <Brain className="w-3.5 h-3.5 text-purple-400" />
+                  <span className={cn("font-medium", neuronLiveScore.score >= 90 ? "text-green-400" : neuronLiveScore.score >= 70 ? "text-yellow-400" : "text-red-400")}>
+                    {neuronLiveScore.score}% NW
+                  </span>
+                </span>
+              )}
             </div>
           </div>
         </div>
@@ -359,7 +385,7 @@ export function ContentViewerPanel({
         </div>
       </div>
 
-      {/* ===== TABS ===== */}
+      {/* ═══════════════ TABS ═══════════════ */}
       <div className="flex border-b border-border bg-card/30 overflow-x-auto">
         {tabs.map(tab => (
           <button key={tab.id} onClick={() => setActiveTab(tab.id)} className={cn(
@@ -375,7 +401,7 @@ export function ContentViewerPanel({
         ))}
       </div>
 
-      {/* ===== CONTENT AREA ===== */}
+      {/* ═══════════════ CONTENT AREA ═══════════════ */}
       <div className="flex-1 overflow-auto">
         {!hasContent ? (
           <div className="flex flex-col items-center justify-center h-full text-center p-8">
@@ -390,12 +416,15 @@ export function ContentViewerPanel({
           </div>
         ) : (
           <>
-            {/* ---------- PREVIEW TAB ---------- */}
+            {/* ────── PREVIEW TAB ────── */}
             {activeTab === 'preview' && (
               <div className="p-6">
                 <div className="flex items-center gap-2 mb-4 px-2">
                   <Globe className="w-4 h-4 text-muted-foreground" />
                   <span className="text-sm text-muted-foreground">WordPress Preview</span>
+                  {isEditorDirty && (
+                    <span className="px-2 py-0.5 bg-yellow-500/20 text-yellow-400 text-xs rounded-full font-medium ml-2">Showing edited version</span>
+                  )}
                 </div>
                 <div className="bg-white rounded-2xl shadow-2xl border border-gray-200 overflow-hidden max-w-4xl mx-auto">
                   <div className="bg-gray-100 px-4 py-2.5 border-b border-gray-200 flex items-center gap-3">
@@ -425,14 +454,16 @@ export function ContentViewerPanel({
                     .wp-preview-content td { padding: 14px 18px; border: 1px solid #e2e8f0; color: #374151; }
                     .wp-preview-content hr { border: none; border-top: 2px solid #f1f5f9; margin: 40px 0; }
                   `}} />
-                  <article className="wp-preview-content" style={{ padding: '48px 56px', fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif', color: '#1a1a1a', lineHeight: 1.8, fontSize: '17px', backgroundColor: '#ffffff' }}
-                    dangerouslySetInnerHTML={{ __html: sanitizeHtml(isEditorDirty ? editedContent : content) }}
+                  <article
+                    className="wp-preview-content"
+                    style={{ padding: '48px 56px', fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif', color: '#1a1a1a', lineHeight: 1.8, fontSize: '17px', backgroundColor: '#ffffff' }}
+                    dangerouslySetInnerHTML={{ __html: sanitizeHtml(displayContent) }}
                   />
                 </div>
               </div>
             )}
 
-            {/* ---------- EDITOR TAB ---------- */}
+            {/* ────── EDITOR TAB ────── */}
             {activeTab === 'editor' && (
               <div className="p-6 h-full flex flex-col">
                 <div className="bg-card/50 border border-border rounded-xl p-3 mb-4">
@@ -481,7 +512,6 @@ export function ContentViewerPanel({
                     <div className="bg-muted/30 px-4 py-2 border-b border-border flex items-center gap-2">
                       <Code className="w-4 h-4 text-muted-foreground" /><span className="text-sm font-medium text-foreground">HTML Source</span>
                     </div>
-                    {/* 🔧 FIX: Added ref={textareaRef} for cursor-aware insertion */}
                     <textarea
                       ref={textareaRef}
                       value={editedContent}
@@ -505,7 +535,7 @@ export function ContentViewerPanel({
               </div>
             )}
 
-            {/* ---------- HTML TAB ---------- */}
+            {/* ────── HTML TAB ────── */}
             {activeTab === 'html' && (
               <div className="p-6">
                 <div className="flex items-center justify-between mb-4">
@@ -535,7 +565,7 @@ export function ContentViewerPanel({
               </div>
             )}
 
-            {/* ---------- SEO ANALYSIS TAB ---------- */}
+            {/* ────── SEO ANALYSIS TAB ────── */}
             {activeTab === 'seo' && (
               <div className="p-6 space-y-6">
                 {generatedContent && (
@@ -563,7 +593,7 @@ export function ContentViewerPanel({
                       <div>
                         <span className="text-muted-foreground text-sm">Secondary:</span>
                         <div className="flex flex-wrap gap-2 mt-2">
-                          {generatedContent.secondaryKeywords.map((kw, i) => (
+                          {generatedContent.secondaryKeywords.map((kw: string, i: number) => (
                             <span key={i} className="px-2 py-1 bg-muted text-muted-foreground rounded text-xs">{kw}</span>
                           ))}
                         </div>
@@ -586,11 +616,24 @@ export function ContentViewerPanel({
                       <p className="text-muted-foreground">Slug: <span className="text-primary font-mono text-xs">/{effectivePublishSlug}</span></p>
                     </div>
                   </div>
+                  {headings.h2.length > 0 && (
+                    <div className="mt-4 pt-4 border-t border-border">
+                      <h4 className="text-sm font-semibold text-foreground mb-2">Heading Outline</h4>
+                      <div className="space-y-1">
+                        {headings.h2.map((h, i) => (
+                          <div key={`h2-${i}`} className="text-sm text-muted-foreground flex items-start gap-2">
+                            <span className="px-1.5 py-0.5 bg-primary/20 text-primary text-xs rounded font-mono flex-shrink-0 mt-0.5">H2</span>
+                            <span>{h}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
             )}
 
-            {/* ---------- INTERNAL LINKS TAB ---------- */}
+            {/* ────── INTERNAL LINKS TAB ────── */}
             {activeTab === 'links' && (
               <div className="p-6 space-y-6">
                 <div className="bg-card/50 border border-border rounded-xl p-6">
@@ -601,22 +644,35 @@ export function ContentViewerPanel({
                   {(generatedContent?.internalLinks && generatedContent.internalLinks.length > 0) ? (
                     <div className="space-y-3">
                       {generatedContent.internalLinks.map((link: any, i: number) => (
-                        <div key={i} className="flex items-start gap-4 p-3 bg-muted/20 border border-border rounded-lg">
-                          <div className="flex-shrink-0 w-8 h-8 bg-primary/10 rounded-lg flex items-center justify-center text-primary text-xs font-bold">{i + 1}</div>
+                        <div key={i} className="flex items-start gap-4 p-4 bg-muted/20 border border-border rounded-xl hover:bg-muted/30 transition-colors">
+                          <div className="flex-shrink-0 w-10 h-10 bg-primary/10 rounded-xl flex items-center justify-center text-primary text-sm font-bold">{i + 1}</div>
                           <div className="flex-1 min-w-0">
-                            <p className="text-sm font-medium text-primary">{link.anchor}</p>
-                            <p className="text-xs text-muted-foreground truncate mt-1">{link.targetUrl}</p>
+                            <div className="flex items-center gap-2 mb-1">
+                              <p className="text-sm font-semibold text-primary">{link.anchor}</p>
+                              {link.position && (
+                                <span className={cn(
+                                  "px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider",
+                                  link.position === 'early' && "bg-blue-500/20 text-blue-400",
+                                  link.position === 'middle' && "bg-purple-500/20 text-purple-400",
+                                  link.position === 'late' && "bg-amber-500/20 text-amber-400"
+                                )}>{link.position}</span>
+                              )}
+                            </div>
+                            <p className="text-xs text-muted-foreground truncate">{link.targetUrl}</p>
+                            {link.context && (
+                              <p className="text-xs text-muted-foreground/70 mt-1 italic">{link.context}</p>
+                            )}
                             {link.relevanceScore !== undefined && (
                               <div className="flex items-center gap-2 mt-2">
                                 <span className="text-xs text-muted-foreground">Relevance:</span>
-                                <div className="h-1.5 flex-1 max-w-[100px] bg-muted rounded-full overflow-hidden">
-                                  <div className={cn("h-full rounded-full", link.relevanceScore >= 70 ? "bg-green-500" : link.relevanceScore >= 40 ? "bg-yellow-500" : "bg-red-500")} style={{ width: `${link.relevanceScore}%` }} />
+                                <div className="h-2 flex-1 max-w-[140px] bg-muted rounded-full overflow-hidden">
+                                  <div className={cn("h-full rounded-full transition-all", link.relevanceScore >= 70 ? "bg-green-500" : link.relevanceScore >= 40 ? "bg-yellow-500" : "bg-red-500")} style={{ width: `${link.relevanceScore}%` }} />
                                 </div>
-                                <span className="text-xs text-muted-foreground">{link.relevanceScore}%</span>
+                                <span className={cn("text-xs font-semibold", link.relevanceScore >= 70 ? "text-green-400" : link.relevanceScore >= 40 ? "text-yellow-400" : "text-red-400")}>{link.relevanceScore}%</span>
                               </div>
                             )}
                           </div>
-                          <a href={link.targetUrl} target="_blank" rel="noopener noreferrer" className="p-2 text-muted-foreground hover:text-primary transition-colors">
+                          <a href={link.targetUrl} target="_blank" rel="noopener noreferrer" className="p-2 text-muted-foreground hover:text-primary transition-colors rounded-lg hover:bg-muted/50">
                             <ExternalLink className="w-4 h-4" />
                           </a>
                         </div>
@@ -625,9 +681,9 @@ export function ContentViewerPanel({
                   ) : contentLinks.length > 0 ? (
                     <div className="space-y-2">
                       {contentLinks.map((link, i) => (
-                        <div key={i} className="flex items-center justify-between p-2 bg-muted/20 rounded-lg text-sm">
-                          <span className="text-primary">{link.text}</span>
-                          <span className="text-muted-foreground truncate max-w-[300px] ml-4">{link.url}</span>
+                        <div key={i} className="flex items-center justify-between p-3 bg-muted/20 rounded-lg text-sm hover:bg-muted/30 transition-colors">
+                          <span className="text-primary font-medium">{link.text}</span>
+                          <span className="text-muted-foreground truncate max-w-[300px] ml-4 font-mono text-xs">{link.url}</span>
                         </div>
                       ))}
                     </div>
@@ -638,7 +694,7 @@ export function ContentViewerPanel({
               </div>
             )}
 
-            {/* ---------- SCHEMA TAB ---------- */}
+            {/* ────── SCHEMA TAB ────── */}
             {activeTab === 'schema' && (
               <div className="p-6 space-y-4">
                 <div className="flex items-center justify-between">
@@ -660,38 +716,19 @@ export function ContentViewerPanel({
               </div>
             )}
 
-            {/* ---------- NEURONWRITER TAB ---------- */}
+            {/* ────── NEURONWRITER TAB (COMPLETELY REDESIGNED) ────── */}
             {activeTab === 'neuron' && (
-              <div className="p-6 space-y-6">
-                <div className="bg-card/50 border border-border rounded-xl p-6">
-                  <h3 className="text-lg font-semibold text-foreground mb-4 flex items-center gap-2">
-                    <Brain className="w-5 h-5 text-primary" />NeuronWriter Analysis
-                  </h3>
-                  {neuronData?.terms && neuronData.terms.length > 0 ? (
-                    <div className="space-y-2">
-                      {neuronData.terms.slice(0, 30).map((term: any, i: number) => {
-                        const isUsed = content.toLowerCase().includes((term.term || term.name || '').toLowerCase());
-                        return (
-                          <div key={i} className="flex items-center justify-between p-2 rounded-lg bg-muted/20">
-                            <span className={cn("text-sm", isUsed ? "text-green-400" : "text-muted-foreground")}>{term.term || term.name || term}</span>
-                            <span className={cn("text-xs px-2 py-0.5 rounded-full", isUsed ? "bg-green-500/20 text-green-400" : "bg-muted text-muted-foreground")}>
-                              {isUsed ? '✓ Used' : 'Missing'}
-                            </span>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  ) : (
-                    <p className="text-muted-foreground text-sm text-center py-8">No NeuronWriter data available. Enable NeuronWriter integration in Setup.</p>
-                  )}
-                </div>
-              </div>
+              <NeuronWriterTab
+                neuronData={neuronData}
+                content={displayContent}
+                neuronLiveScore={neuronLiveScore}
+              />
             )}
           </>
         )}
       </div>
 
-      {/* ===== PUBLISH MODAL ===== */}
+      {/* ═══════════════ PUBLISH MODAL ═══════════════ */}
       {showPublishModal && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[60] flex items-center justify-center p-4" onClick={() => setShowPublishModal(false)}>
           <div className="bg-card border border-border rounded-2xl w-full max-w-lg p-6 space-y-5" onClick={(e) => e.stopPropagation()}>
@@ -749,7 +786,383 @@ export function ContentViewerPanel({
   );
 }
 
-// ===== HELPER COMPONENTS =====
+// ═══════════════════════════════════════════════════════════════════
+// NEURONWRITER TAB - COMPLETE REDESIGN WITH SEPARATE SECTIONS
+// ═══════════════════════════════════════════════════════════════════
+
+interface NeuronWriterTabProps {
+  neuronData: NeuronWriterAnalysis | null | undefined;
+  content: string;
+  neuronLiveScore: { score: number; missing: string[]; underused: string[]; optimal: string[] } | null;
+}
+
+function NeuronWriterTab({ neuronData, content, neuronLiveScore }: NeuronWriterTabProps) {
+  const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({
+    basic: true,
+    extended: true,
+    entities: true,
+    h1: false,
+    h2: true,
+    h3: false,
+    gaps: true,
+  });
+
+  const [termFilter, setTermFilter] = useState<'all' | 'missing' | 'underused' | 'optimal'>('all');
+
+  const toggleSection = (key: string) => {
+    setExpandedSections(prev => ({ ...prev, [key]: !prev[key] }));
+  };
+
+  // Determine if we have structured NeuronWriter data (from our new service)
+  // or legacy flat data (from old integration)
+  const hasStructuredData = neuronData && (
+    Array.isArray(neuronData.basicKeywords) ||
+    Array.isArray(neuronData.extendedKeywords) ||
+    Array.isArray(neuronData.entities)
+  );
+
+  // Legacy fallback: if neuronData has a flat `terms` array
+  const legacyTerms: any[] = !hasStructuredData && (neuronData as any)?.terms
+    ? (neuronData as any).terms
+    : [];
+
+  const contentLower = content.replace(/<[^>]*>/g, ' ').toLowerCase();
+
+  // Helper: count term occurrences in content
+  function countTermInContent(term: string): number {
+    const termLower = term.toLowerCase();
+    const regex = new RegExp(termLower.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
+    const matches = contentLower.match(regex);
+    return matches ? matches.length : 0;
+  }
+
+  // Helper: determine term status
+  function getTermStatus(term: string, recommended: number = 1): 'missing' | 'underused' | 'optimal' | 'overused' {
+    const count = countTermInContent(term);
+    if (count === 0) return 'missing';
+    if (count < recommended) return 'underused';
+    if (count <= recommended * 1.5) return 'optimal';
+    return 'overused';
+  }
+
+  // Filter function
+  function shouldShowTerm(term: string, recommended: number = 1): boolean {
+    if (termFilter === 'all') return true;
+    return getTermStatus(term, recommended) === termFilter;
+  }
+
+  if (!neuronData) {
+    return (
+      <div className="p-6">
+        <div className="flex flex-col items-center justify-center py-16 text-center">
+          <div className="w-16 h-16 rounded-2xl bg-purple-500/10 flex items-center justify-center mb-4">
+            <Brain className="w-8 h-8 text-purple-400" />
+          </div>
+          <h3 className="text-xl font-bold text-foreground mb-2">NeuronWriter Not Connected</h3>
+          <p className="text-muted-foreground max-w-md">Enable NeuronWriter integration in the Setup tab to see keyword analysis, heading suggestions, entities, and content optimization scores.</p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="p-6 space-y-6">
+
+      {/* ── Score Overview Card ── */}
+      <div className="bg-card/50 border border-border rounded-xl p-6">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-lg font-semibold text-foreground flex items-center gap-2">
+            <Brain className="w-5 h-5 text-purple-400" />NeuronWriter Score
+          </h3>
+          {neuronData.keyword && (
+            <span className="px-3 py-1 bg-purple-500/20 text-purple-400 rounded-lg text-sm font-medium">
+              "{neuronData.keyword}"
+            </span>
+          )}
+        </div>
+        {neuronLiveScore ? (
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            {/* Main Score */}
+            <div className="col-span-2 md:col-span-1">
+              <div className="relative w-24 h-24 mx-auto">
+                <svg className="w-24 h-24 transform -rotate-90" viewBox="0 0 100 100">
+                  <circle cx="50" cy="50" r="42" stroke="currentColor" className="text-muted/30" strokeWidth="8" fill="none" />
+                  <circle cx="50" cy="50" r="42" stroke="currentColor"
+                    className={cn(neuronLiveScore.score >= 90 ? "text-green-500" : neuronLiveScore.score >= 70 ? "text-yellow-500" : "text-red-500")}
+                    strokeWidth="8" fill="none" strokeDasharray={`${neuronLiveScore.score * 2.64} 264`} strokeLinecap="round"
+                  />
+                </svg>
+                <div className="absolute inset-0 flex items-center justify-center">
+                  <span className={cn("text-2xl font-bold", neuronLiveScore.score >= 90 ? "text-green-400" : neuronLiveScore.score >= 70 ? "text-yellow-400" : "text-red-400")}>
+                    {neuronLiveScore.score}%
+                  </span>
+                </div>
+              </div>
+            </div>
+            {/* Metrics */}
+            <div className="flex flex-col justify-center">
+              <div className="flex items-center gap-2 mb-1">
+                <div className="w-3 h-3 rounded-full bg-green-500" />
+                <span className="text-sm text-muted-foreground">Optimal</span>
+              </div>
+              <span className="text-2xl font-bold text-green-400">{neuronLiveScore.optimal.length}</span>
+            </div>
+            <div className="flex flex-col justify-center">
+              <div className="flex items-center gap-2 mb-1">
+                <div className="w-3 h-3 rounded-full bg-yellow-500" />
+                <span className="text-sm text-muted-foreground">Underused</span>
+              </div>
+              <span className="text-2xl font-bold text-yellow-400">{neuronLiveScore.underused.length}</span>
+            </div>
+            <div className="flex flex-col justify-center">
+              <div className="flex items-center gap-2 mb-1">
+                <div className="w-3 h-3 rounded-full bg-red-500" />
+                <span className="text-sm text-muted-foreground">Missing</span>
+              </div>
+              <span className="text-2xl font-bold text-red-400">{neuronLiveScore.missing.length}</span>
+            </div>
+          </div>
+        ) : (
+          <p className="text-muted-foreground text-sm">Score data not available.</p>
+        )}
+
+        {/* Recommendations */}
+        {hasStructuredData && neuronData.recommendations && (
+          <div className="mt-4 pt-4 border-t border-border grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
+            <div className="bg-muted/20 rounded-lg p-3">
+              <span className="text-muted-foreground">Target Words</span>
+              <p className="text-foreground font-bold text-lg">{neuronData.recommendations.targetWordCount?.toLocaleString()}</p>
+            </div>
+            <div className="bg-muted/20 rounded-lg p-3">
+              <span className="text-muted-foreground">Target Score</span>
+              <p className="text-foreground font-bold text-lg">{neuronData.recommendations.targetScore}%</p>
+            </div>
+            <div className="bg-muted/20 rounded-lg p-3">
+              <span className="text-muted-foreground">Min H2 Count</span>
+              <p className="text-foreground font-bold text-lg">{neuronData.recommendations.minH2Count}</p>
+            </div>
+            <div className="bg-muted/20 rounded-lg p-3">
+              <span className="text-muted-foreground">Min H3 Count</span>
+              <p className="text-foreground font-bold text-lg">{neuronData.recommendations.minH3Count}</p>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* ── Filter Bar ── */}
+      <div className="flex items-center gap-2 flex-wrap">
+        <Filter className="w-4 h-4 text-muted-foreground" />
+        <span className="text-sm text-muted-foreground mr-2">Filter:</span>
+        {(['all', 'missing', 'underused', 'optimal'] as const).map(f => (
+          <button
+            key={f}
+            onClick={() => setTermFilter(f)}
+            className={cn(
+              "px-3 py-1.5 rounded-lg text-xs font-medium transition-all capitalize",
+              termFilter === f
+                ? f === 'missing' ? "bg-red-500/20 text-red-400 ring-1 ring-red-500/30"
+                  : f === 'underused' ? "bg-yellow-500/20 text-yellow-400 ring-1 ring-yellow-500/30"
+                  : f === 'optimal' ? "bg-green-500/20 text-green-400 ring-1 ring-green-500/30"
+                  : "bg-primary/20 text-primary ring-1 ring-primary/30"
+                : "bg-muted/30 text-muted-foreground hover:text-foreground"
+            )}
+          >
+            {f}
+          </button>
+        ))}
+      </div>
+
+      {/* ── Structured Sections (new NeuronWriterService data) ── */}
+      {hasStructuredData ? (
+        <>
+          {/* Basic Keywords Section */}
+          <NeuronSection
+            title="Basic Keywords"
+            subtitle="High priority — MUST use all"
+            icon={<Target className="w-5 h-5 text-red-400" />}
+            accentColor="red"
+            isExpanded={expandedSections.basic}
+            onToggle={() => toggleSection('basic')}
+            count={neuronData.basicKeywords?.length || 0}
+          >
+            <TermGrid terms={neuronData.basicKeywords || []} content={contentLower} filter={termFilter} />
+          </NeuronSection>
+
+          {/* Extended Keywords Section */}
+          <NeuronSection
+            title="Extended Keywords"
+            subtitle="Medium priority — use most"
+            icon={<Layers className="w-5 h-5 text-blue-400" />}
+            accentColor="blue"
+            isExpanded={expandedSections.extended}
+            onToggle={() => toggleSection('extended')}
+            count={neuronData.extendedKeywords?.length || 0}
+          >
+            <TermGrid terms={neuronData.extendedKeywords || []} content={contentLower} filter={termFilter} />
+          </NeuronSection>
+
+          {/* Entities Section */}
+          <NeuronSection
+            title="Entities"
+            subtitle="Semantic relevance — include naturally"
+            icon={<Tag className="w-5 h-5 text-purple-400" />}
+            accentColor="purple"
+            isExpanded={expandedSections.entities}
+            onToggle={() => toggleSection('entities')}
+            count={neuronData.entities?.length || 0}
+          >
+            <TermGrid terms={neuronData.entities || []} content={contentLower} filter={termFilter} />
+          </NeuronSection>
+
+          {/* H1 Suggestions */}
+          {neuronData.h1Suggestions && neuronData.h1Suggestions.length > 0 && (
+            <NeuronSection
+              title="H1 Title Suggestions"
+              subtitle="Recommended H1 titles from top competitors"
+              icon={<Heading1 className="w-5 h-5 text-amber-400" />}
+              accentColor="amber"
+              isExpanded={expandedSections.h1}
+              onToggle={() => toggleSection('h1')}
+              count={neuronData.h1Suggestions.length}
+            >
+              <HeadingList headings={neuronData.h1Suggestions} />
+            </NeuronSection>
+          )}
+
+          {/* H2 Suggestions */}
+          {neuronData.h2Suggestions && neuronData.h2Suggestions.length > 0 && (
+            <NeuronSection
+              title="H2 Heading Suggestions"
+              subtitle="Use or adapt these headings in your content"
+              icon={<Heading2 className="w-5 h-5 text-emerald-400" />}
+              accentColor="emerald"
+              isExpanded={expandedSections.h2}
+              onToggle={() => toggleSection('h2')}
+              count={neuronData.h2Suggestions.length}
+            >
+              <HeadingList headings={neuronData.h2Suggestions} />
+            </NeuronSection>
+          )}
+
+          {/* H3 Suggestions */}
+          {neuronData.h3Suggestions && neuronData.h3Suggestions.length > 0 && (
+            <NeuronSection
+              title="H3 Subheading Suggestions"
+              subtitle="Sub-topics to cover within sections"
+              icon={<Heading3 className="w-5 h-5 text-cyan-400" />}
+              accentColor="cyan"
+              isExpanded={expandedSections.h3}
+              onToggle={() => toggleSection('h3')}
+              count={neuronData.h3Suggestions.length}
+            >
+              <HeadingList headings={neuronData.h3Suggestions} />
+            </NeuronSection>
+          )}
+
+          {/* Content Gaps */}
+          {neuronData.recommendations?.contentGaps && neuronData.recommendations.contentGaps.length > 0 && (
+            <NeuronSection
+              title="Content Gaps"
+              subtitle="Critical missing terms — add these to boost score"
+              icon={<AlertTriangle className="w-5 h-5 text-red-400" />}
+              accentColor="red"
+              isExpanded={expandedSections.gaps}
+              onToggle={() => toggleSection('gaps')}
+              count={neuronData.recommendations.contentGaps.length}
+            >
+              <div className="flex flex-wrap gap-2">
+                {neuronData.recommendations.contentGaps.map((term, i) => (
+                  <span key={i} className="px-3 py-1.5 bg-red-500/10 text-red-400 border border-red-500/20 rounded-lg text-sm font-medium">
+                    {term}
+                  </span>
+                ))}
+              </div>
+            </NeuronSection>
+          )}
+
+          {/* Competitor Data */}
+          {neuronData.competitorData && neuronData.competitorData.length > 0 && (
+            <div className="bg-card/50 border border-border rounded-xl p-6">
+              <h3 className="text-lg font-semibold text-foreground mb-4 flex items-center gap-2">
+                <TrendingUp className="w-5 h-5 text-primary" />Competitor Analysis
+              </h3>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-border">
+                      <th className="text-left py-2 px-3 text-muted-foreground font-medium">#</th>
+                      <th className="text-left py-2 px-3 text-muted-foreground font-medium">URL</th>
+                      <th className="text-left py-2 px-3 text-muted-foreground font-medium">Title</th>
+                      <th className="text-right py-2 px-3 text-muted-foreground font-medium">Words</th>
+                      <th className="text-right py-2 px-3 text-muted-foreground font-medium">Score</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {neuronData.competitorData.slice(0, 10).map((comp, i) => (
+                      <tr key={i} className="border-b border-border/50 hover:bg-muted/20 transition-colors">
+                        <td className="py-2 px-3 text-muted-foreground">{i + 1}</td>
+                        <td className="py-2 px-3"><a href={comp.url} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline truncate block max-w-[200px]">{new URL(comp.url).hostname}</a></td>
+                        <td className="py-2 px-3 text-foreground truncate max-w-[250px]">{comp.title}</td>
+                        <td className="py-2 px-3 text-right text-muted-foreground">{comp.wordCount.toLocaleString()}</td>
+                        <td className="py-2 px-3 text-right">
+                          <span className={cn("font-medium", comp.score >= 70 ? "text-green-400" : comp.score >= 50 ? "text-yellow-400" : "text-muted-foreground")}>{comp.score}%</span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </>
+      ) : (
+        /* ── Legacy Flat Terms View (fallback) ── */
+        <div className="bg-card/50 border border-border rounded-xl p-6">
+          <h3 className="text-lg font-semibold text-foreground mb-4 flex items-center gap-2">
+            <Brain className="w-5 h-5 text-purple-400" />Terms Analysis
+          </h3>
+          {legacyTerms.length > 0 ? (
+            <div className="space-y-2">
+              {legacyTerms.slice(0, 50).map((term: any, i: number) => {
+                const termText = term.term || term.name || term.text || (typeof term === 'string' ? term : '');
+                if (!termText) return null;
+                const isUsed = contentLower.includes(termText.toLowerCase());
+                const count = countTermInContent(termText);
+                return (
+                  <div key={i} className="flex items-center justify-between p-2 rounded-lg bg-muted/20 hover:bg-muted/30 transition-colors">
+                    <div className="flex items-center gap-2">
+                      <span className={cn("text-sm font-medium", isUsed ? "text-green-400" : "text-foreground")}>{termText}</span>
+                      {term.weight && (
+                        <span className="text-[10px] px-1.5 py-0.5 bg-muted text-muted-foreground rounded">w:{term.weight}</span>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {count > 0 && (
+                        <span className="text-xs text-muted-foreground">{count}×</span>
+                      )}
+                      <span className={cn(
+                        "text-xs px-2 py-0.5 rounded-full font-medium",
+                        isUsed ? "bg-green-500/20 text-green-400" : "bg-red-500/20 text-red-400"
+                      )}>
+                        {isUsed ? '✓ Used' : '✗ Missing'}
+                      </span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <p className="text-muted-foreground text-sm text-center py-8">No NeuronWriter term data available.</p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// HELPER COMPONENTS
+// ═══════════════════════════════════════════════════════════════════
 
 function QualityMetric({ label, value }: { label: string; value: number }) {
   const color = value >= 80 ? 'bg-green-500' : value >= 60 ? 'bg-yellow-500' : 'bg-red-500';
@@ -766,4 +1179,212 @@ function QualityMetric({ label, value }: { label: string; value: number }) {
   );
 }
 
+// ── Collapsible NeuronWriter Section ──
+
+interface NeuronSectionProps {
+  title: string;
+  subtitle: string;
+  icon: React.ReactNode;
+  accentColor: string;
+  isExpanded: boolean;
+  onToggle: () => void;
+  count: number;
+  children: React.ReactNode;
+}
+
+function NeuronSection({ title, subtitle, icon, accentColor, isExpanded, onToggle, count, children }: NeuronSectionProps) {
+  return (
+    <div className="bg-card/50 border border-border rounded-xl overflow-hidden">
+      <button
+        onClick={onToggle}
+        className="w-full flex items-center justify-between p-4 hover:bg-muted/20 transition-colors"
+      >
+        <div className="flex items-center gap-3">
+          {icon}
+          <div className="text-left">
+            <h4 className="text-sm font-semibold text-foreground">{title}</h4>
+            <p className="text-xs text-muted-foreground">{subtitle}</p>
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="px-2 py-0.5 bg-muted text-muted-foreground text-xs rounded-full font-medium">{count}</span>
+          {isExpanded ? <ChevronUp className="w-4 h-4 text-muted-foreground" /> : <ChevronDown className="w-4 h-4 text-muted-foreground" />}
+        </div>
+      </button>
+      {isExpanded && (
+        <div className="px-4 pb-4 border-t border-border pt-3">
+          {children}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Term Grid (for basic/extended/entity terms) ──
+
+interface TermGridProps {
+  terms: NeuronWriterTermData[];
+  content: string;
+  filter: 'all' | 'missing' | 'underused' | 'optimal';
+}
+
+function TermGrid({ terms, content, filter }: TermGridProps) {
+  if (!terms || terms.length === 0) {
+    return <p className="text-muted-foreground text-sm text-center py-4">No terms in this category.</p>;
+  }
+
+  const filteredTerms = terms.filter(t => {
+    const termLower = t.term.toLowerCase();
+    const regex = new RegExp(termLower.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
+    const count = (content.match(regex) || []).length;
+    const status = count === 0 ? 'missing' : count < t.recommended ? 'underused' : 'optimal';
+    return filter === 'all' || status === filter;
+  });
+
+  if (filteredTerms.length === 0) {
+    return <p className="text-muted-foreground text-sm text-center py-4">No terms match the current filter.</p>;
+  }
+
+  return (
+    <div className="space-y-1.5">
+      {/* Column Headers */}
+      <div className="grid grid-cols-[1fr_60px_60px_80px_120px] gap-2 px-3 py-1 text-[10px] text-muted-foreground uppercase tracking-wider font-semibold">
+        <span>Term</span>
+        <span className="text-center">Weight</span>
+        <span className="text-center">Found</span>
+        <span className="text-center">Target</span>
+        <span className="text-right">Status</span>
+      </div>
+      {filteredTerms.map((term, i) => {
+        const termLower = term.term.toLowerCase();
+        const regex = new RegExp(termLower.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
+        const count = (content.match(regex) || []).length;
+        const status = count === 0 ? 'missing' : count < term.recommended ? 'underused' : count <= term.recommended * 1.5 ? 'optimal' : 'overused';
+
+        return (
+          <div key={i} className={cn(
+            "grid grid-cols-[1fr_60px_60px_80px_120px] gap-2 items-center px-3 py-2 rounded-lg text-sm transition-colors",
+            status === 'optimal' ? "bg-green-500/5 hover:bg-green-500/10" :
+            status === 'underused' ? "bg-yellow-500/5 hover:bg-yellow-500/10" :
+            status === 'missing' ? "bg-red-500/5 hover:bg-red-500/10" :
+            "bg-blue-500/5 hover:bg-blue-500/10"
+          )}>
+            <span className={cn("font-medium truncate", status === 'optimal' ? "text-green-400" : status === 'missing' ? "text-red-400" : status === 'underused' ? "text-yellow-400" : "text-blue-400")}>
+              {term.term}
+            </span>
+            <span className="text-center text-muted-foreground text-xs">{term.weight}</span>
+            <span className={cn("text-center font-bold text-xs", count > 0 ? "text-foreground" : "text-red-400")}>
+              {count}
+            </span>
+            <span className="text-center text-muted-foreground text-xs">{term.recommended}×</span>
+            <div className="flex items-center justify-end gap-1.5">
+              <div className="h-1.5 w-16 bg-muted rounded-full overflow-hidden">
+                <div className={cn("h-full rounded-full transition-all",
+                  status === 'optimal' ? "bg-green-500" :
+                  status === 'underused' ? "bg-yellow-500" :
+                  status === 'missing' ? "bg-red-500" : "bg-blue-500"
+                )} style={{ width: `${Math.min(100, (count / Math.max(1, term.recommended)) * 100)}%` }} />
+              </div>
+              <span className={cn(
+                "text-[10px] px-1.5 py-0.5 rounded-full font-semibold uppercase tracking-wider whitespace-nowrap",
+                status === 'optimal' ? "bg-green-500/20 text-green-400" :
+                status === 'underused' ? "bg-yellow-500/20 text-yellow-400" :
+                status === 'missing' ? "bg-red-500/20 text-red-400" :
+                "bg-blue-500/20 text-blue-400"
+              )}>
+                {status}
+              </span>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ── Heading Suggestion List ──
+
+function HeadingList({ headings }: { headings: NeuronWriterHeadingData[] }) {
+  if (!headings || headings.length === 0) {
+    return <p className="text-muted-foreground text-sm text-center py-4">No heading suggestions.</p>;
+  }
+
+  return (
+    <div className="space-y-2">
+      {headings.map((h, i) => (
+        <div key={i} className="flex items-start gap-3 p-3 bg-muted/20 rounded-lg hover:bg-muted/30 transition-colors">
+          <span className={cn(
+            "flex-shrink-0 px-2 py-0.5 rounded font-mono text-xs font-bold uppercase",
+            h.level === 'h1' ? "bg-amber-500/20 text-amber-400" :
+            h.level === 'h2' ? "bg-emerald-500/20 text-emerald-400" :
+            "bg-cyan-500/20 text-cyan-400"
+          )}>
+            {h.level}
+          </span>
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-medium text-foreground">{h.text}</p>
+            {h.source && (
+              <p className="text-[11px] text-muted-foreground mt-0.5 truncate">{h.source}</p>
+            )}
+          </div>
+          {h.relevanceScore !== undefined && (
+            <div className="flex items-center gap-1 flex-shrink"></div>
+
+function HeadingList({ headings }: { headings: NeuronWriterHeadingData[] }) {
+  if (!headings || headings.length === 0) {
+    return <p className="text-muted-foreground text-sm text-center py-4">No heading suggestions.</p>;
+  }
+
+  return (
+    <div className="space-y-2">
+      {headings.map((h, i) => (
+        <div key={i} className="flex items-start gap-3 p-3 bg-muted/20 rounded-lg hover:bg-muted/30 transition-colors">
+          <span className={cn(
+            "flex-shrink-0 px-2 py-0.5 rounded font-mono text-xs font-bold uppercase",
+            h.level === 'h1' ? "bg-amber-500/20 text-amber-400" :
+            h.level === 'h2' ? "bg-emerald-500/20 text-emerald-400" :
+            "bg-cyan-500/20 text-cyan-400"
+          )}>
+            {h.level}
+          </span>
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-medium text-foreground">{h.text}</p>
+            {h.source && (
+              <p className="text-[11px] text-muted-foreground mt-0.5 truncate">{h.source}</p>
+            )}
+          </div>
+          {h.relevanceScore !== undefined && (
+            <div className="flex items-center gap-1.5 flex-shrink-0">
+              <div className="h-1.5 w-12 bg-muted rounded-full overflow-hidden">
+                <div
+                  className={cn(
+                    "h-full rounded-full transition-all",
+                    h.relevanceScore >= 80 ? "bg-green-500" :
+                    h.relevanceScore >= 50 ? "bg-yellow-500" :
+                    "bg-red-500"
+                  )}
+                  style={{ width: `${h.relevanceScore}%` }}
+                />
+              </div>
+              <span className={cn(
+                "text-[10px] font-semibold tabular-nums",
+                h.relevanceScore >= 80 ? "text-green-400" :
+                h.relevanceScore >= 50 ? "text-yellow-400" :
+                "text-red-400"
+              )}>
+                {h.relevanceScore}%
+              </span>
+            </div>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// DEFAULT EXPORT
+// ═══════════════════════════════════════════════════════════════════
+
 export default ContentViewerPanel;
+

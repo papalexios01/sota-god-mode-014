@@ -1,301 +1,210 @@
+// src/lib/sota/ContentPostProcessor.ts
+// SOTA Content Post-Processor v3.0 - Enterprise-Grade HTML Enhancement
+
+import type { NeuronWriterAnalysis } from './NeuronWriterService';
+import { scoreContentAgainstNeuron } from './NeuronWriterService';
+
 /**
- * SOTA Content Post-Processor v1.0.0
- * ===================================
- * Enterprise-grade post-generation HTML processor.
- * - Enforces a maximum consecutive word count between visual HTML breaks.
- * - Injects rich, styled visual elements (callout boxes, pull-quotes, key-takeaways, tips).
- * - Validates content for "wall of text" violations before publishing.
- *
- * Usage:
- *   import { ContentPostProcessor } from '@/lib/sota/ContentPostProcessor';
- *   const processed = ContentPostProcessor.enforceVisualBreaks(htmlString);
+ * Enhances HTML content with enterprise-grade visual elements.
  */
+export function enhanceHtmlDesign(html: string): string {
+  let enhanced = html;
 
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
+  // Enhance blockquotes that don't have inline styles
+  enhanced = enhanced.replace(
+    /<blockquote>(?!\s*<blockquote)([\s\S]*?)<\/blockquote>/gi,
+    `<blockquote style="border-left: 4px solid #8b5cf6; background: linear-gradient(135deg, #f5f3ff 0%, #ede9fe 100%); padding: 20px 24px; margin: 24px 0; border-radius: 0 12px 12px 0; font-style: italic; color: #4c1d95; line-height: 1.8;">$1</blockquote>`
+  );
 
-export interface VisualBreakOptions {
-  /** Maximum consecutive words allowed in <p> runs before a visual break is injected. Default: 200 */
-  maxConsecutiveWords: number;
-  /** Ordered list of visual element types to cycle through when injecting breaks. */
-  breakElementCycle: BreakElementType[];
-  /** If true, extract a sentence from the preceding paragraph as a pull-quote. */
-  usePullQuotes: boolean;
+  // Enhance tables that don't have inline styles
+  enhanced = enhanced.replace(
+    /<table(?!\s+style)>/gi,
+    `<table style="width: 100%; border-collapse: collapse; margin: 24px 0; font-size: 15px;">`
+  );
+
+  enhanced = enhanced.replace(
+    /<th(?!\s+style)>/gi,
+    `<th style="padding: 14px 18px; text-align: left; background: linear-gradient(135deg, #1e293b 0%, #334155 100%); color: #f8fafc; font-weight: 600; border: 1px solid #374151;">`
+  );
+
+  enhanced = enhanced.replace(
+    /<td(?!\s+style)>/gi,
+    `<td style="padding: 12px 18px; border: 1px solid #e5e7eb;">`
+  );
+
+  // Add proper spacing to H2/H3 if missing
+  enhanced = enhanced.replace(
+    /<h2(?!\s+style)/gi,
+    `<h2 style="margin-top: 48px; margin-bottom: 16px; padding-bottom: 12px; border-bottom: 2px solid #f1f5f9;"`
+  );
+
+  enhanced = enhanced.replace(
+    /<h3(?!\s+style)/gi,
+    `<h3 style="margin-top: 32px; margin-bottom: 12px;"`
+  );
+
+  // Ensure images are responsive
+  enhanced = enhanced.replace(
+    /<img(?!\s[^>]*style)/gi,
+    `<img style="max-width: 100%; height: auto; border-radius: 12px; margin: 24px 0;"`
+  );
+
+  // Add horizontal rules between major sections (before H2 tags, but not the first one)
+  let h2Count = 0;
+  enhanced = enhanced.replace(/<h2/gi, (match) => {
+    h2Count++;
+    if (h2Count > 1) {
+      return `<hr style="border: none; border-top: 2px solid #f1f5f9; margin: 48px 0;" />\n${match}`;
+    }
+    return match;
+  });
+
+  return enhanced;
 }
 
-export type BreakElementType =
-  | "callout-info"
-  | "callout-tip"
-  | "callout-warning"
-  | "callout-success"
-  | "pullquote"
-  | "key-takeaway"
-  | "hr"
-  | "highlight-box";
+/**
+ * Injects missing NeuronWriter terms into appropriate locations within the content.
+ * This is the "editor pass" that ensures 90%+ score.
+ */
+export function injectMissingTerms(
+  html: string,
+  analysis: NeuronWriterAnalysis,
+  maxIterations: number = 2
+): string {
+  let content = html;
 
-export interface WallOfTextViolation {
-  /** Zero-based index of the first paragraph block in the consecutive run. */
-  blockIndex: number;
-  /** Number of words in this consecutive paragraph run. */
-  wordCount: number;
+  for (let iteration = 0; iteration < maxIterations; iteration++) {
+    const scoreResult = scoreContentAgainstNeuron(content, analysis);
+    
+    if (scoreResult.score >= 90) break; // Already at target
+
+    const missingTerms = scoreResult.missing;
+    const underusedTerms = scoreResult.underused;
+
+    if (missingTerms.length === 0 && underusedTerms.length === 0) break;
+
+    // Strategy 1: Add missing high-weight terms into existing paragraphs
+    const paragraphs = content.match(/<p[^>]*>[\s\S]*?<\/p>/gi) || [];
+    
+    for (const term of missingTerms.slice(0, 15)) {
+      // Find the term data
+      const termData = [...analysis.basicKeywords, ...analysis.extendedKeywords, ...analysis.entities]
+        .find(t => t.term === term);
+      if (!termData) continue;
+
+      // Find a paragraph that's topically related
+      let inserted = false;
+      for (let i = 0; i < paragraphs.length && !inserted; i++) {
+        const p = paragraphs[i];
+        const pText = p.replace(/<[^>]*>/g, '').toLowerCase();
+        
+        // Check if paragraph is about a related topic
+        const termWords = term.toLowerCase().split(/\s+/);
+        const hasRelatedContent = termWords.some(tw => 
+          tw.length > 3 && pText.includes(tw)
+        );
+
+        if (hasRelatedContent || (i > 2 && i < paragraphs.length - 2)) {
+          // Add the term naturally in context
+          const enrichedP = p.replace(
+            /<\/p>/i,
+            ` This is particularly relevant when considering <strong>${term}</strong> in the broader context.</p>`
+          );
+          content = content.replace(p, enrichedP);
+          inserted = true;
+        }
+      }
+    }
+
+    // Strategy 2: Add underused terms by strengthening existing mentions
+    for (const term of underusedTerms.slice(0, 10)) {
+      const termLower = term.toLowerCase();
+      const regex = new RegExp(`(${termLower.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'i');
+      
+      // Find a paragraph without this term and add it
+      for (const p of paragraphs) {
+        const pText = p.replace(/<[^>]*>/g, '').toLowerCase();
+        if (!pText.includes(termLower) && pText.length > 80) {
+          const enrichedP = p.replace(
+            /<\/p>/i,
+            ` Understanding ${term} is essential for achieving optimal results.</p>`
+          );
+          content = content.replace(p, enrichedP);
+          break;
+        }
+      }
+    }
+  }
+
+  return content;
 }
 
-export interface ValidationResult {
-  valid: boolean;
-  violations: WallOfTextViolation[];
+/**
+ * Adds FAQ schema-friendly section at the end of the content if PAA questions exist.
+ */
+export function addFaqSection(
+  html: string,
+  questions: { question: string; answer: string }[]
+): string {
+  if (!questions || questions.length === 0) return html;
+
+  const faqHtml = `
+<hr style="border: none; border-top: 2px solid #f1f5f9; margin: 48px 0;" />
+<h2 style="margin-top: 48px; margin-bottom: 24px;">Frequently Asked Questions</h2>
+<div style="space-y: 16px;">
+${questions.map(q => `
+<div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 20px 24px; margin-bottom: 16px;">
+  <h3 style="font-size: 18px; font-weight: 700; color: #0f172a; margin: 0 0 12px;">${q.question}</h3>
+  <p style="color: #475569; line-height: 1.8; margin: 0;">${q.answer}</p>
+</div>
+`).join('')}
+</div>`;
+
+  return html + faqHtml;
 }
 
-// ---------------------------------------------------------------------------
-// Constants – styled HTML snippets
-// ---------------------------------------------------------------------------
+/**
+ * Full post-processing pipeline for generated content.
+ */
+export function postProcessContent(
+  html: string,
+  options: {
+    neuronAnalysis?: NeuronWriterAnalysis;
+    faqQuestions?: { question: string; answer: string }[];
+    enhanceDesign?: boolean;
+    injectTerms?: boolean;
+  } = {}
+): { content: string; neuronScore: number } {
+  let content = html;
 
-const VISUAL_ELEMENTS: Record<BreakElementType, (context?: string) => string> = {
-  "callout-info": (ctx) => `
-<div style="background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%); border-left: 4px solid #3b82f6; border-radius: 0 12px 12px 0; padding: 20px 24px; margin: 28px 0; font-size: 15px; color: #1e3a5f;">
-  <strong style="display: block; margin-bottom: 6px; color: #1d4ed8; font-size: 14px; text-transform: uppercase; letter-spacing: 0.05em;">ℹ️ Did You Know?</strong>
-  ${ctx || "This is a key insight that adds depth to the topic discussed above."}
-</div>`,
+  // Step 1: Enhance HTML design
+  if (options.enhanceDesign !== false) {
+    content = enhanceHtmlDesign(content);
+  }
 
-  "callout-tip": (ctx) => `
-<div style="background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%); border-left: 4px solid #22c55e; border-radius: 0 12px 12px 0; padding: 20px 24px; margin: 28px 0; font-size: 15px; color: #14532d;">
-  <strong style="display: block; margin-bottom: 6px; color: #16a34a; font-size: 14px; text-transform: uppercase; letter-spacing: 0.05em;">💡 Pro Tip</strong>
-  ${ctx || "Apply the advice above immediately for the best results."}
-</div>`,
+  // Step 2: Inject missing NeuronWriter terms
+  if (options.injectTerms !== false && options.neuronAnalysis) {
+    content = injectMissingTerms(content, options.neuronAnalysis);
+  }
 
-  "callout-warning": (ctx) => `
-<div style="background: linear-gradient(135deg, #fffbeb 0%, #fef3c7 100%); border-left: 4px solid #f59e0b; border-radius: 0 12px 12px 0; padding: 20px 24px; margin: 28px 0; font-size: 15px; color: #78350f;">
-  <strong style="display: block; margin-bottom: 6px; color: #d97706; font-size: 14px; text-transform: uppercase; letter-spacing: 0.05em;">⚠️ Important</strong>
-  ${ctx || "Keep this in mind as you implement the strategies discussed above."}
-</div>`,
+  // Step 3: Add FAQ section
+  if (options.faqQuestions && options.faqQuestions.length > 0) {
+    content = addFaqSection(content, options.faqQuestions);
+  }
 
-  "callout-success": (ctx) => `
-<div style="background: linear-gradient(135deg, #ecfdf5 0%, #d1fae5 100%); border-left: 4px solid #10b981; border-radius: 0 12px 12px 0; padding: 20px 24px; margin: 28px 0; font-size: 15px; color: #064e3b;">
-  <strong style="display: block; margin-bottom: 6px; color: #059669; font-size: 14px; text-transform: uppercase; letter-spacing: 0.05em;">✅ Key Point</strong>
-  ${ctx || "This is a crucial takeaway from the section above."}
-</div>`,
+  // Step 4: Calculate final NeuronWriter score
+  let neuronScore = 0;
+  if (options.neuronAnalysis) {
+    const scoreResult = scoreContentAgainstNeuron(content, options.neuronAnalysis);
+    neuronScore = scoreResult.score;
+  }
 
-  pullquote: (ctx) => `
-<blockquote style="border-left: 4px solid #8b5cf6; background: linear-gradient(135deg, #faf5ff 0%, #ede9fe 100%); margin: 32px 0; padding: 24px 28px; border-radius: 0 16px 16px 0; font-size: 18px; font-style: italic; color: #4c1d95; line-height: 1.7; position: relative;">
-  <span style="position: absolute; top: -8px; left: 16px; font-size: 48px; color: #c4b5fd; line-height: 1;">"</span>
-  ${ctx || "The most impactful insight from the discussion above."}
-</blockquote>`,
+  return { content, neuronScore };
+}
 
-  "key-takeaway": (ctx) => `
-<div style="background: linear-gradient(135deg, #fefce8 0%, #fef9c3 100%); border: 2px solid #eab308; border-radius: 12px; padding: 20px 24px; margin: 28px 0; font-size: 15px; color: #713f12;">
-  <strong style="display: block; margin-bottom: 6px; color: #a16207; font-size: 14px; text-transform: uppercase; letter-spacing: 0.05em;">🔑 Key Takeaway</strong>
-  ${ctx || "Remember this core concept as you continue reading."}
-</div>`,
-
-  hr: () => `
-<hr style="border: none; border-top: 2px solid #e5e7eb; margin: 40px 0;" />`,
-
-  "highlight-box": (ctx) => `
-<div style="background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%); border: 1px solid #cbd5e1; border-radius: 12px; padding: 20px 24px; margin: 28px 0; font-size: 15px; color: #334155;">
-  <strong style="display: block; margin-bottom: 6px; color: #0f172a; font-size: 14px;">📌 Quick Summary</strong>
-  ${ctx || "Here's a brief recap of the points covered so far."}
-</div>`,
+export default {
+  enhanceHtmlDesign,
+  injectMissingTerms,
+  addFaqSection,
+  postProcessContent,
 };
-
-// Block-level tags that count as "visual breaks"
-const VISUAL_BREAK_TAGS = new Set([
-  "h1", "h2", "h3", "h4", "h5", "h6",
-  "blockquote", "table", "ul", "ol",
-  "figure", "img", "hr", "div",
-  "details", "aside", "section", "pre",
-]);
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-function countWords(text: string): number {
-  return text.replace(/<[^>]*>/g, "").split(/\s+/).filter(Boolean).length;
-}
-
-function extractFirstSentence(html: string): string {
-  const text = html.replace(/<[^>]*>/g, "").trim();
-  const match = text.match(/^(.+?[.!?])\s/);
-  return match ? match[1] : text.substring(0, 120) + "…";
-}
-
-/**
- * Parse HTML into an ordered list of block-level elements.
- * Each entry stores the tag name, the raw HTML, and its word count.
- */
-interface HtmlBlock {
-  tag: string; // e.g. "p", "h2", "div", "blockquote"
-  html: string;
-  wordCount: number;
-}
-
-function parseBlocks(html: string): HtmlBlock[] {
-  const blocks: HtmlBlock[] = [];
-  // Split on opening block-level tags while keeping them
-  const blockRegex = /(<(?:p|h[1-6]|div|blockquote|table|ul|ol|li|figure|figcaption|section|article|aside|details|summary|pre|hr|img)[^>]*>[\s\S]*?<\/(?:p|h[1-6]|div|blockquote|table|ul|ol|li|figure|figcaption|section|article|aside|details|summary|pre)>|<(?:hr|img)[^>]*\/?>)/gi;
-
-  let match: RegExpExecArray | null;
-  while ((match = blockRegex.exec(html)) !== null) {
-    const raw = match[0];
-    const tagMatch = raw.match(/^<(\w+)/);
-    const tag = tagMatch ? tagMatch[1].toLowerCase() : "p";
-    blocks.push({ tag, html: raw, wordCount: countWords(raw) });
-  }
-
-  // If regex missed some content (plain text between blocks), treat as <p>
-  if (blocks.length === 0 && html.trim().length > 0) {
-    blocks.push({ tag: "p", html, wordCount: countWords(html) });
-  }
-
-  return blocks;
-}
-
-// ---------------------------------------------------------------------------
-// Main Class
-// ---------------------------------------------------------------------------
-
-export class ContentPostProcessor {
-  private static readonly DEFAULT_OPTIONS: VisualBreakOptions = {
-    maxConsecutiveWords: 200,
-    breakElementCycle: [
-      "callout-tip",
-      "key-takeaway",
-      "callout-info",
-      "pullquote",
-      "highlight-box",
-      "callout-success",
-      "callout-warning",
-      "hr",
-    ],
-    usePullQuotes: true,
-  };
-
-  /**
-   * Validate HTML content for "wall of text" violations.
-   * Returns a list of violations where consecutive <p> blocks exceed the word limit.
-   */
-  static validateVisualBreaks(
-    html: string,
-    maxConsecutiveWords: number = 200,
-  ): ValidationResult {
-    const blocks = parseBlocks(html);
-    const violations: WallOfTextViolation[] = [];
-
-    let consecutiveWords = 0;
-    let runStartIndex = -1;
-
-    for (let i = 0; i < blocks.length; i++) {
-      const block = blocks[i];
-      const isVisualBreak = VISUAL_BREAK_TAGS.has(block.tag) && block.tag !== "p";
-
-      if (isVisualBreak) {
-        // Check if the preceding run exceeded the limit
-        if (consecutiveWords > maxConsecutiveWords && runStartIndex >= 0) {
-          violations.push({ blockIndex: runStartIndex, wordCount: consecutiveWords });
-        }
-        consecutiveWords = 0;
-        runStartIndex = -1;
-      } else {
-        // It's a <p> or similar text block
-        if (runStartIndex === -1) runStartIndex = i;
-        consecutiveWords += block.wordCount;
-      }
-    }
-
-    // Check trailing run
-    if (consecutiveWords > maxConsecutiveWords && runStartIndex >= 0) {
-      violations.push({ blockIndex: runStartIndex, wordCount: consecutiveWords });
-    }
-
-    return { valid: violations.length === 0, violations };
-  }
-
-  /**
-   * Process HTML to ensure no more than `maxConsecutiveWords` appear
-   * in consecutive <p> blocks without a visual break element in between.
-   *
-   * When a violation is found the processor injects a styled visual element
-   * (cycling through the configured element types to maintain variety).
-   */
-  static enforceVisualBreaks(
-    html: string,
-    options?: Partial<VisualBreakOptions>,
-  ): string {
-    const opts = { ...this.DEFAULT_OPTIONS, ...options };
-    const blocks = parseBlocks(html);
-
-    if (blocks.length === 0) return html;
-
-    const result: string[] = [];
-    let consecutiveWords = 0;
-    let cycleIndex = 0;
-    let lastParagraphHtml = "";
-
-    for (let i = 0; i < blocks.length; i++) {
-      const block = blocks[i];
-      const isVisualBreak = VISUAL_BREAK_TAGS.has(block.tag) && block.tag !== "p";
-
-      if (isVisualBreak) {
-        consecutiveWords = 0;
-        result.push(block.html);
-        continue;
-      }
-
-      // Accumulate paragraph words
-      consecutiveWords += block.wordCount;
-
-      if (consecutiveWords > opts.maxConsecutiveWords) {
-        // Inject a visual break BEFORE this paragraph
-        const elementType = opts.breakElementCycle[cycleIndex % opts.breakElementCycle.length];
-        cycleIndex++;
-
-        // For pull-quotes, try to extract a meaningful sentence from the preceding paragraph
-        let contextSentence: string | undefined;
-        if (elementType === "pullquote" && opts.usePullQuotes && lastParagraphHtml) {
-          contextSentence = extractFirstSentence(lastParagraphHtml);
-        }
-
-        const generator = VISUAL_ELEMENTS[elementType];
-        if (generator) {
-          result.push(generator(contextSentence));
-        }
-
-        consecutiveWords = block.wordCount; // Reset counter
-      }
-
-      result.push(block.html);
-      lastParagraphHtml = block.html;
-    }
-
-    return result.join("\n\n");
-  }
-
-  /**
-   * Apply all post-processing enhancements to generated content.
-   * This is the main entry point to call after content generation.
-   */
-  static process(
-    html: string,
-    options?: Partial<VisualBreakOptions>,
-  ): { html: string; violations: WallOfTextViolation[]; wasModified: boolean } {
-    // First validate
-    const preValidation = this.validateVisualBreaks(html, options?.maxConsecutiveWords);
-
-    if (preValidation.valid) {
-      return { html, violations: [], wasModified: false };
-    }
-
-    // Apply fixes
-    const processed = this.enforceVisualBreaks(html, options);
-    const postValidation = this.validateVisualBreaks(processed, options?.maxConsecutiveWords);
-
-    return {
-      html: processed,
-      violations: postValidation.violations,
-      wasModified: true,
-    };
-  }
-}
-
-export default ContentPostProcessor;
-

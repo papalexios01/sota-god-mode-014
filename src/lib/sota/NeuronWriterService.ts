@@ -1,5 +1,5 @@
 // src/lib/sota/NeuronWriterService.ts
-// SOTA NeuronWriter Service v4.0 — Backward-Compatible Class + Factory Export
+// SOTA NeuronWriter Service v4.1 — With listProjects() fix
 // Exports: NeuronWriterService (class), createNeuronWriterService (factory), NeuronWriterAnalysis (type)
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -38,7 +38,6 @@ export interface NeuronWriterAnalysis {
   language?: string;
   keyword?: string;
 
-  // Structured sections (used by ContentViewerPanel NeuronWriter tab)
   basicKeywords?: NeuronWriterTermData[];
   extendedKeywords?: NeuronWriterTermData[];
   h1Suggestions?: NeuronWriterHeadingData[];
@@ -60,7 +59,6 @@ export interface NeuronWriterAnalysis {
   allTerms?: string[];
 }
 
-/** Structured term data for ContentViewerPanel display */
 export interface NeuronWriterTermData {
   term: string;
   type: 'basic' | 'extended' | 'entity';
@@ -70,7 +68,6 @@ export interface NeuronWriterTermData {
   status: 'missing' | 'underused' | 'optimal' | 'overused';
 }
 
-/** Structured heading data for ContentViewerPanel display */
 export interface NeuronWriterHeadingData {
   text: string;
   level: 'h1' | 'h2' | 'h3';
@@ -140,8 +137,7 @@ export class NeuronWriterService {
     this.apiKey = apiKey;
   }
 
-
-    // ─── Project Management ────────────────────────────────────────────
+  // ─── Project Management ────────────────────────────────────────────
 
   async listProjects(): Promise<{
     success: boolean;
@@ -157,7 +153,6 @@ export class NeuronWriterService {
 
       const raw = res.data;
 
-      // NeuronWriter API can return projects in various shapes
       const rawProjects: any[] =
         Array.isArray(raw) ? raw :
         Array.isArray(raw?.projects) ? raw.projects :
@@ -175,7 +170,6 @@ export class NeuronWriterService {
       })).filter((p: any) => p.id);
 
       if (projects.length === 0 && rawProjects.length > 0) {
-        // Data exists but couldn't parse — return raw for debugging
         console.warn('[NeuronWriter] Received project data but could not parse:', rawProjects.slice(0, 2));
         return { success: false, error: 'Received data but could not parse project list' };
       }
@@ -186,11 +180,6 @@ export class NeuronWriterService {
       return { success: false, error: `listProjects failed: ${message}` };
     }
   }
-
-  // ─── Query Management ──────────────────────────────────────────────
-
-  async findQueryByKeyword(
-
 
   // ─── Query Management ──────────────────────────────────────────────
 
@@ -213,12 +202,10 @@ export class NeuronWriterService {
 
       const keywordLower = keyword.toLowerCase().trim();
 
-      // Try exact match first
       let match = queries.find((q: any) =>
         (q.keyword || q.query || '').toLowerCase().trim() === keywordLower
       );
 
-      // Try partial match
       if (!match) {
         match = queries.find((q: any) =>
           (q.keyword || q.query || '').toLowerCase().includes(keywordLower) ||
@@ -288,7 +275,6 @@ export class NeuronWriterService {
 
       const raw = res.data?.data || res.data;
 
-      // Check if analysis is actually ready
       const status = raw?.status || raw?.query_status || '';
       if (status && !['ready', 'done', 'completed', 'finished'].includes(status.toLowerCase())) {
         return { success: false, error: `Query not ready. Status: ${status}` };
@@ -325,7 +311,6 @@ export class NeuronWriterService {
         }
       }
 
-      // Fallback: calculate locally
       return { success: false, error: res.error || 'No score in response' };
     } catch (e) {
       return { success: false, error: `evaluateContent failed: ${e}` };
@@ -352,7 +337,6 @@ export class NeuronWriterService {
   ): string {
     const sections: string[] = [];
 
-    // Basic/required terms
     const required = terms.filter(t => t.type === 'required' || t.weight >= 70);
     const recommended = terms.filter(t => t.type === 'recommended' && t.weight < 70);
 
@@ -370,7 +354,6 @@ export class NeuronWriterService {
       });
     }
 
-    // Extended terms
     if (analysis?.termsExtended && analysis.termsExtended.length > 0) {
       sections.push('\nEXTENDED TERMS (weave naturally):');
       analysis.termsExtended.slice(0, 25).forEach(t => {
@@ -378,7 +361,6 @@ export class NeuronWriterService {
       });
     }
 
-    // Entities
     if (analysis?.entities && analysis.entities.length > 0) {
       sections.push('\nENTITIES (reference naturally for topical authority):');
       analysis.entities.slice(0, 20).forEach(e => {
@@ -386,7 +368,6 @@ export class NeuronWriterService {
       });
     }
 
-    // H2 headings
     if (analysis?.headingsH2 && analysis.headingsH2.length > 0) {
       sections.push('\nRECOMMENDED H2 HEADINGS (use or adapt):');
       analysis.headingsH2.slice(0, 12).forEach(h => {
@@ -394,7 +375,6 @@ export class NeuronWriterService {
       });
     }
 
-    // H3 headings
     if (analysis?.headingsH3 && analysis.headingsH3.length > 0) {
       sections.push('\nRECOMMENDED H3 SUBHEADINGS:');
       analysis.headingsH3.slice(0, 15).forEach(h => {
@@ -402,7 +382,6 @@ export class NeuronWriterService {
       });
     }
 
-    // Target length
     if (analysis?.recommended_length) {
       sections.push(`\nTARGET WORD COUNT: ${analysis.recommended_length}+`);
     }
@@ -434,14 +413,12 @@ export class NeuronWriterService {
           missing.push(termText);
         }
       } catch {
-        // Regex failed for this term — skip
         if (!contentLower.includes(termLower)) {
           missing.push(termText);
         }
       }
     }
 
-    // Sort by weight (highest first)
     return missing.sort((a, b) => {
       const termA = terms.find((t: any) => t.term === a) as any;
       const termB = terms.find((t: any) => t.term === b) as any;
@@ -497,7 +474,6 @@ export class NeuronWriterService {
     const headingsH2: NeuronWriterHeading[] = [];
     const headingsH3: NeuronWriterHeading[] = [];
 
-    // Parse terms
     const rawTerms = raw?.terms || raw?.keywords || raw?.data?.terms || [];
     if (Array.isArray(rawTerms)) {
       for (const t of rawTerms) {
@@ -514,7 +490,6 @@ export class NeuronWriterService {
       }
     }
 
-    // Parse extended terms
     const rawExtended = raw?.terms_extended || raw?.termsExtended || raw?.data?.terms_extended || [];
     if (Array.isArray(rawExtended)) {
       for (const t of rawExtended) {
@@ -530,7 +505,6 @@ export class NeuronWriterService {
       }
     }
 
-    // Parse entities
     const rawEntities = raw?.entities || raw?.data?.entities || [];
     if (Array.isArray(rawEntities)) {
       for (const e of rawEntities) {
@@ -540,7 +514,6 @@ export class NeuronWriterService {
       }
     }
 
-    // Parse headings
     const parseHeadings = (source: any[]): NeuronWriterHeading[] => {
       if (!Array.isArray(source)) return [];
       return source.map(h => ({
@@ -554,7 +527,6 @@ export class NeuronWriterService {
     headingsH2.push(...parseHeadings(raw?.headings_h2 || raw?.headingsH2 || raw?.data?.headings_h2 || []));
     headingsH3.push(...parseHeadings(raw?.headings_h3 || raw?.headingsH3 || raw?.data?.headings_h3 || []));
 
-    // Parse competitors
     const rawCompetitors = raw?.competitors || raw?.serp || raw?.data?.competitors || [];
     const competitorData = Array.isArray(rawCompetitors) ? rawCompetitors.map((c: any) => ({
       url: c.url || c.link || '',
@@ -563,7 +535,6 @@ export class NeuronWriterService {
       score: c.score || c.nw_score || 0,
     })).filter((c: any) => c.url) : [];
 
-    // Build structured sections for ContentViewerPanel
     const basicKeywords: NeuronWriterTermData[] = terms
       .filter(t => t.type === 'required' || t.weight >= 70)
       .map(t => ({
@@ -587,15 +558,6 @@ export class NeuronWriterService {
       status: 'missing' as const,
     }));
 
-    const entityTermData: NeuronWriterTermData[] = entities.map(e => ({
-      term: e.entity,
-      type: 'entity' as const,
-      weight: e.usage_pc || 50,
-      recommended: 1,
-      found: 0,
-      status: 'missing' as const,
-    }));
-
     const toHeadingData = (headings: NeuronWriterHeading[], level: 'h1' | 'h2' | 'h3'): NeuronWriterHeadingData[] =>
       headings.map(h => ({
         text: h.text,
@@ -604,7 +566,6 @@ export class NeuronWriterService {
         relevanceScore: h.usage_pc || 70,
       }));
 
-    // Content gaps = high-weight terms that are commonly missing
     const allTermTexts = [...terms, ...termsExtended].map(t => t.term);
     const contentGaps = terms
       .filter(t => t.weight >= 60)
@@ -616,7 +577,6 @@ export class NeuronWriterService {
       : 2500;
 
     return {
-      // Core data (used by EnterpriseContentOrchestrator)
       terms: terms.sort((a, b) => b.weight - a.weight),
       termsExtended: termsExtended.sort((a, b) => b.weight - a.weight),
       entities,
@@ -628,9 +588,8 @@ export class NeuronWriterService {
       language: raw?.language || raw?.lang || 'en',
       keyword: raw?.keyword || raw?.query || '',
 
-      // Structured sections (used by ContentViewerPanel NeuronWriter tab)
       basicKeywords,
-      extendedKeywords: extendedKeywords,
+      extendedKeywords,
       h1Suggestions: toHeadingData(headingsH1, 'h1'),
       h2Suggestions: toHeadingData(headingsH2, 'h2'),
       h3Suggestions: toHeadingData(headingsH3, 'h3'),
@@ -678,7 +637,6 @@ export function scoreContentAgainstNeuron(
     })),
   ].filter(t => t.term);
 
-  // Fallback: if no structured data, use raw terms
   if (allTerms.length === 0 && analysis.terms) {
     for (const t of analysis.terms) {
       allTerms.push({ term: t.term, weight: t.weight, recommended: Math.max(1, t.frequency) });

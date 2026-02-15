@@ -2079,9 +2079,77 @@ Write the complete article now. Output ONLY HTML.`;
       this.log(`3j: References — ${references.length} sources ensured in content`);
     } catch (e) {
       this.warn(`3j: ensureReferencesSection failed (non-fatal): ${e}`);
+  }
+
+        // --- 3k: Ensure FAQ section exists ---
+    try {
+      const hasFaq = /<(details|h2)[^>]*>[\s\S]*?(?:faq|frequently asked|common questions)/i.test(enhancedContent);
+      if (!hasFaq) {
+        this.log('3k: No FAQ section detected — generating...');
+        const faqTerms = neuron
+          ? (neuron.analysis.terms || []).slice(0, 15).map(t => t.term).join(', ')
+          : options.keyword;
+        const faqPrompt = `Generate a FAQ section for an article titled "${title}" about "${options.keyword}".
+
+Create exactly 8 frequently asked questions with detailed answers.
+
+REQUIREMENTS:
+- Each question must be specific and valuable (not generic)
+- Answers should be 40-80 words each
+- Include the keyword "${options.keyword}" in at least 3 questions
+- Naturally incorporate these terms where relevant: ${faqTerms}
+- Output PURE HTML using this exact format for each Q&A:
+
+<details style="margin: 12px 0; border: 1px solid #e2e8f0; border-radius: 12px; overflow: hidden; max-width: 100%; box-sizing: border-box;">
+  <summary style="padding: 18px 24px; background: #f8fafc; cursor: pointer; font-weight: 700; color: #0f172a; font-size: 17px; list-style: none; display: flex; justify-content: space-between; align-items: center;">
+    Question here? <span style="font-size: 20px; color: #64748b;">+</span>
+  </summary>
+  <div style="padding: 16px 24px; color: #475569; font-size: 16px; line-height: 1.8; border-top: 1px solid #e2e8f0;">
+    Answer here.
+  </div>
+</details>
+
+Wrap all 8 Q&As inside:
+<div style="margin-top: 48px;">
+  <h2 style="color: #0f172a; font-size: 30px; font-weight: 900; margin: 56px 0 24px 0; padding-bottom: 14px; border-bottom: 4px solid #10b981;">❓ Frequently Asked Questions</h2>
+  <!-- all 8 details/summary blocks here -->
+</div>
+
+Output ONLY the HTML. No markdown. No commentary.`;
+
+        try {
+          const faqResult = await this.engine.generateWithModel({
+            prompt: faqPrompt,
+            model: this.config.primaryModel || 'gemini',
+            apiKeys: this.config.apiKeys,
+            systemPrompt: 'Generate FAQ HTML. Output PURE HTML ONLY.',
+            temperature: 0.6,
+            maxTokens: 4096,
+          });
+
+          if (faqResult.content && faqResult.content.trim().length > 200) {
+            const refsMarker = enhancedContent.indexOf('<!-- SOTA References Section -->');
+            if (refsMarker !== -1) {
+              enhancedContent = enhancedContent.slice(0, refsMarker) + '\n\n' + faqResult.content.trim() + '\n\n' + enhancedContent.slice(refsMarker);
+            } else {
+              enhancedContent = enhancedContent + '\n\n' + faqResult.content.trim();
+            }
+            this.log('3k: FAQ section generated and injected ✅');
+          } else {
+            this.warn('3k: FAQ generation returned insufficient content');
+          }
+        } catch (faqGenErr) {
+          this.warn(`3k: FAQ generation failed (non-fatal): ${faqGenErr}`);
+        }
+      } else {
+        this.log('3k: FAQ section already exists ✅');
+      }
+    } catch (e) {
+      this.warn(`3k: FAQ enforcement failed (non-fatal): ${e}`);
     }
 
     const phase3Ms = endPhase3Timer();
+
     this.log(`Phase 3 complete in ${(phase3Ms / 1000).toFixed(1)}s — all 10 post-processing steps executed`);
 
     // ═════════════════════════════════════════════════════════════════════

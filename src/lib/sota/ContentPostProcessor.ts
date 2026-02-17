@@ -113,7 +113,7 @@ export function removeAIPatterns(html: string): string {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// VISUAL BREAK ELEMENT FACTORIES (dynamic, not static canned text)
+// VISUAL BREAK ELEMENT FACTORIES (dynamic, contextual — no static canned text)
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /**
@@ -127,39 +127,54 @@ function buildContextualBreakElement(
   // Extract a short theme phrase from the preceding paragraph
   const words = precedingParagraphText.replace(/<[^>]*>/g, ' ').trim().split(/\s+/).filter(Boolean);
   const themeSlice = words.slice(0, Math.min(6, words.length)).join(' ');
+  const theme = themeSlice || 'this concept';
 
   const templates = [
     // Pro Tip (indigo)
-    (theme: string) =>
+    (t: string) =>
       `<div style="background: #ffffff; border: 1px solid #e0e7ff; border-left: 5px solid #6366f1; padding: 24px 28px; margin: 36px 0; border-radius: 0 16px 16px 0; box-shadow: 0 4px 20px rgba(99, 102, 241, 0.08); max-width: 100%; box-sizing: border-box;">
   <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 14px;">
     <span style="background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%); color: white; width: 32px; height: 32px; border-radius: 10px; display: inline-flex; align-items: center; justify-content: center; font-size: 16px;">💡</span>
     <strong style="color: #3730a3; font-size: 17px; font-weight: 800;">Pro Tip</strong>
   </div>
-  <p style="color: #334155; font-size: 17px; margin: 0; line-height: 1.8;">If you're applying what we just covered about ${theme}, start small — test it on one page first, measure for 2 weeks, then scale.</p>
+  <p style="color: #334155; font-size: 17px; margin: 0; line-height: 1.8;">If you're applying what we just covered about ${t}, start small — test it on one page first, measure for 2 weeks, then scale.</p>
 </div>`,
     // Key Insight (green)
-    (theme: string) =>
+    (t: string) =>
       `<div style="background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%); border-left: 4px solid #16a34a; padding: 20px 24px; border-radius: 0 12px 12px 0; margin: 36px 0; max-width: 100%; box-sizing: border-box;">
   <p style="font-weight: 700; color: #15803d; margin: 0 0 8px; font-size: 16px;">🔑 Key Insight</p>
-  <p style="color: #166534; margin: 0; line-height: 1.7;">The section above about ${theme} is where 80% of the value sits. Don't skip past it — re-read it if you need to.</p>
+  <p style="color: #166534; margin: 0; line-height: 1.7;">The section above about ${t} is where 80% of the value sits. Don't skip past it — re-read it if you need to.</p>
 </div>`,
     // Important Note (amber)
-    (theme: string) =>
+    (t: string) =>
       `<div style="background: linear-gradient(135deg, #fffbeb 0%, #fef3c7 100%); border-left: 4px solid #d97706; padding: 20px 24px; border-radius: 0 12px 12px 0; margin: 36px 0; max-width: 100%; box-sizing: border-box;">
   <p style="font-weight: 700; color: #92400e; margin: 0 0 8px; font-size: 16px;">📌 Don't Skip This</p>
-  <p style="color: #78350f; margin: 0; line-height: 1.7;">What we just covered about ${theme} trips up even experienced practitioners. Bookmark this section.</p>
+  <p style="color: #78350f; margin: 0; line-height: 1.7;">What we just covered about ${t} trips up even experienced practitioners. Bookmark this section.</p>
 </div>`,
     // Quick Summary (blue)
-    (theme: string) =>
+    (t: string) =>
       `<div style="background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%); border-left: 4px solid #2563eb; padding: 20px 24px; border-radius: 0 12px 12px 0; margin: 36px 0; max-width: 100%; box-sizing: border-box;">
   <p style="font-weight: 700; color: #1e40af; margin: 0 0 8px; font-size: 16px;">📋 Quick Recap</p>
-  <p style="color: #1e3a5f; margin: 0; line-height: 1.7;">Get the fundamentals of ${theme} right first. Advanced tactics won't save a weak foundation.</p>
+  <p style="color: #1e3a5f; margin: 0; line-height: 1.7;">Get the fundamentals of ${t} right first. Advanced tactics won't save a weak foundation.</p>
 </div>`,
+    // Reality Check (red-tinted)
+    (t: string) =>
+      `<div style="background: #ffffff; border: 1px solid #fecaca; border-left: 5px solid #ef4444; padding: 24px 28px; margin: 36px 0; border-radius: 0 16px 16px 0; box-shadow: 0 4px 20px rgba(239, 68, 68, 0.08); max-width: 100%; box-sizing: border-box;">
+  <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 14px;">
+    <span style="background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%); color: white; width: 32px; height: 32px; border-radius: 10px; display: inline-flex; align-items: center; justify-content: center; font-size: 16px;">⚠️</span>
+    <strong style="color: #991b1b; font-size: 17px; font-weight: 800;">Reality Check</strong>
+  </div>
+  <p style="color: #334155; font-size: 17px; margin: 0; line-height: 1.8;">Most people rush through ${t} and pay for it later. Slow down here — the 10 minutes you invest now saves 10 hours of fixing mistakes.</p>
+</div>`,
+    // Expert Callout (purple)
+    (t: string) =>
+      `<blockquote style="border-left: 4px solid #8b5cf6; background: linear-gradient(135deg, #faf5ff 0%, #f5f3ff 100%); margin: 36px 0; padding: 24px 28px; border-radius: 0 16px 16px 0; max-width: 100%; box-sizing: border-box;">
+  <p style="font-size: 18px; font-style: italic; color: #4c1d95; line-height: 1.8; margin: 0;">"When it comes to ${t}, the practitioners who get results are the ones who master the boring fundamentals first."</p>
+</blockquote>`,
   ];
 
   const template = templates[elementIndex % templates.length];
-  return template(themeSlice || 'this concept');
+  return template(theme);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -341,7 +356,6 @@ export function injectMissingTerms(
   if (!html || !missingTerms || missingTerms.length === 0) return html;
 
   // Sentence templates — each produces a different syntactic structure.
-  // The term is lowercased if it appears mid-sentence.
   const TEMPLATES: Array<(term: string) => string> = [
     (t) => ` That's especially true when you factor in ${t}.`,
     (t) => ` Smart practitioners pay close attention to ${t} at this stage.`,

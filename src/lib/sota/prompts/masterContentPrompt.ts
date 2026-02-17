@@ -1,6 +1,7 @@
 // src/lib/sota/prompts/masterContentPrompt.ts
-// SOTA Master Content Prompt v4.0 — Enterprise-Grade Blog Post Generation
+// SOTA Master Content Prompt v4.1 — Enterprise-Grade Blog Post Generation
 // Overhauled: multi-persona, XML-structured, anti-fluff, section-level guidance
+// v4.1: Added explicit visual break word limit rule
 
 export interface ContentPromptConfig {
   primaryKeyword: string;
@@ -324,6 +325,11 @@ STEP-BY-STEP NUMBERED LIST:
   </li>
 </ol>
 
+VISUAL BREAK RULE (CRITICAL):
+• Never write more than 200 words of consecutive <p> text without a visual HTML element (callout box, table, blockquote, list, stat highlight, or figure)
+• If a section runs long, break it up with a styled element — this directly impacts readability scores
+• Count words between styled elements and ensure no gap exceeds ~180 words
+
 REQUIREMENTS:
 • Use 4-6 of these styled elements per article, distributed across sections
 • Minimum: 1 key takeaway, 1 pro tip or warning, 1 table or stat box
@@ -496,7 +502,6 @@ CRITICAL — NeuronWriter score target: 90%+. Every term matters.
     sections.push(``);
     sections.push(`EXISTING CONTENT TO REFRESH:`);
     sections.push(`<existing_content>`);
-    // Send more content for refresh analysis — up to 6000 chars
     sections.push(existingContent.substring(0, 6000));
     if (existingContent.length > 6000) {
       sections.push(`\n... [content truncated at 6000 chars — ${existingContent.length} total]`);
@@ -543,7 +548,6 @@ export function buildContinuationPrompt(
   sections.push(`</continuation_context>`);
 
   sections.push(`<previous_content_ending>`);
-  // Send the last ~1500 chars for context continuity
   sections.push(existingHtml.slice(-1500));
   sections.push(`</previous_content_ending>`);
 
@@ -594,7 +598,6 @@ export function buildSelfCritiquePrompt(
 
   sections.push(`<edit_checklist>`);
 
-  // NW compliance fixes
   if (missingTerms && missingTerms.length > 0) {
     sections.push(`MISSING KEYWORDS (MUST add naturally):`);
     missingTerms.forEach((t) => sections.push(`  ✗ "${t}"`));

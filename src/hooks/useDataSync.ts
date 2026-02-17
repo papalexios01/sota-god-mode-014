@@ -2,7 +2,7 @@
 import { useOptimizerStore, type GeneratedContentStore } from "@/lib/store";
 import { getSupabaseConfig } from "@/lib/supabaseClient";
 import {
-  loadAllBlogPosts,
+  loadAllBlogPostsWithNeuron,
   saveBlogPost,
   deleteBlogPost,
   ensureTableExists,
@@ -29,6 +29,7 @@ export function useDataSync() {
     setGeneratedContent,
     contentItems,
     addContentItemWithId,
+    setNeuronWriterData,
   } = useOptimizerStore();
 
   const loadFromDatabase = useCallback(async () => {
@@ -67,8 +68,10 @@ export function useDataSync() {
       }
       setTableMissing(false);
 
-      const loadedContent = await loadAllBlogPosts();
+      // SOTA: Load both content AND NeuronWriter analysis data from Supabase
+      const { content: loadedContent, neuronData: loadedNeuronData } = await loadAllBlogPostsWithNeuron();
       const loadedCount = Object.keys(loadedContent).length;
+      const neuronCount = Object.keys(loadedNeuronData).length;
 
       if (loadedCount > 0) {
         for (const [itemId, content] of Object.entries(loadedContent)) {
@@ -91,12 +94,17 @@ export function useDataSync() {
           }
         }
 
-        toast.success(`Loaded ${loadedCount} blog posts from database`);
+        // Restore NeuronWriter analysis data into the store
+        for (const [itemId, nwData] of Object.entries(loadedNeuronData)) {
+          setNeuronWriterData(itemId, nwData);
+        }
+
+        toast.success(`Loaded ${loadedCount} blog posts${neuronCount > 0 ? ` (${neuronCount} with NeuronWriter data)` : ''} from database`);
       }
 
       setIsConnected(true);
       setLastSyncTime(new Date());
-      console.log(`[DataSync] Successfully loaded ${loadedCount} blog posts`);
+      console.log(`[DataSync] Successfully loaded ${loadedCount} blog posts, ${neuronCount} with NeuronWriter data`);
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Unknown error';
       setError(message);
@@ -105,9 +113,9 @@ export function useDataSync() {
     } finally {
       setIsLoading(false);
     }
-  }, [setGeneratedContent, contentItems, addContentItemWithId]);
+  }, [setGeneratedContent, setNeuronWriterData, contentItems, addContentItemWithId]);
 
-  const saveToDatabase = useCallback(async (itemId: string, contentOverride?: GeneratedContentStore[string]) => {
+  const saveToDatabase = useCallback(async (itemId: string, contentOverride?: GeneratedContentStore[string], neuronwriterData?: any) => {
     // In offline mode, return true (localStorage handles persistence)
     if (!getSupabaseConfig().configured) {
       return true;
@@ -120,8 +128,8 @@ export function useDataSync() {
     }
 
     try {
-      const success = await saveBlogPost(itemId, content);
-            if (success) {
+      const success = await saveBlogPost(itemId, content, neuronwriterData);
+      if (success) {
         setLastSyncTime(new Date());
         setTableMissing(false);
       } else {

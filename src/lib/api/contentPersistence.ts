@@ -1,5 +1,5 @@
 import { getSupabaseClient, getSupabaseConfig, withSupabase } from '../supabaseClient';
-import type { GeneratedContentStore } from '../store';
+import type { GeneratedContentStore, NeuronWriterDataStore } from '../store';
 
 // SOTA Content Persistence with Graceful Supabase Fallback
 // All operations safely check for Supabase availability.
@@ -48,7 +48,7 @@ export async function ensureTableExists(): Promise<boolean> {
         return false;
       }
 
-      if (msg.toLowerCase().includes('permission') || code in ('42501')) {
+      if (msg.toLowerCase().includes('permission') || code === '42501') {
         lastDbCheckError = { kind: 'permission', code, message: msg };
         console.error('[ContentPersistence] Permission blocked access:', msg);
         return false;
@@ -68,11 +68,27 @@ export async function ensureTableExists(): Promise<boolean> {
   }
 }
 
+export interface LoadResult {
+  content: GeneratedContentStore;
+  neuronData: NeuronWriterDataStore;
+}
+
 export async function loadAllBlogPosts(): Promise<GeneratedContentStore> {
+  const result = await loadAllBlogPostsWithNeuron();
+  return result.content;
+}
+
+/**
+ * SOTA: Load blog posts AND NeuronWriter analysis data from Supabase.
+ * This ensures NeuronWriter data survives page reloads / cross-device sessions.
+ */
+export async function loadAllBlogPostsWithNeuron(): Promise<LoadResult> {
+  const empty: LoadResult = { content: {}, neuronData: {} };
+
   // If Supabase is not configured, return empty (local storage handles persistence)
   if (!getSupabaseConfig().configured || !getSupabaseClient()) {
     console.info('[ContentPersistence] Skipping Supabase load (not configured)');
-    return {};
+    return empty;
   }
 
   try {
@@ -83,12 +99,14 @@ export async function loadAllBlogPosts(): Promise<GeneratedContentStore> {
 
     if (error) {
       console.error('[ContentPersistence] Load error:', error.message);
-      return {};
+      return empty;
     }
 
-    const store: GeneratedContentStore = {};
+    const contentStore: GeneratedContentStore = {};
+    const neuronStore: NeuronWriterDataStore = {};
+
     for (const row of data || []) {
-      store[row.item_id] = {
+      contentStore[row.item_id] = {
         id: row.id,
         title: row.title,
         seoTitle: row.seo_title,
@@ -113,17 +131,30 @@ export async function loadAllBlogPosts(): Promise<GeneratedContentStore> {
         generatedAt: row.generated_at,
         model: row.model,
       };
+
+      // Restore NeuronWriter analysis data if present in DB
+      if (row.neuronwriter_data && typeof row.neuronwriter_data === 'object') {
+        neuronStore[row.item_id] = row.neuronwriter_data;
+      }
     }
 
-    console.log(`[ContentPersistence] Loaded ${Object.keys(store).length} blog posts from Supabase`);
-    return store;
+    console.log(`[ContentPersistence] Loaded ${Object.keys(contentStore).length} blog posts, ${Object.keys(neuronStore).length} with NeuronWriter data`);
+    return { content: contentStore, neuronData: neuronStore };
   } catch (err) {
     console.error('[ContentPersistence] Load exception:', err);
-    return {};
+    return empty;
   }
 }
 
-export async function saveBlogPost(itemId: string, content: GeneratedContentStore[string]): Promise<boolean> {
+/**
+ * SOTA: Save blog post content AND NeuronWriter analysis data to Supabase.
+ * The neuronwriterData parameter is optional for backward compatibility.
+ */
+export async function saveBlogPost(
+  itemId: string,
+  content: GeneratedContentStore[string],
+  neuronwriterData?: NeuronWriterDataStore[string] | null
+): Promise<boolean> {
   // If Supabase is not configured, silently succeed (local storage handles it)
   if (!getSupabaseConfig().configured || !getSupabaseClient()) {
     console.info('[ContentPersistence] Skipping Supabase save (not configured)');
@@ -131,7 +162,7 @@ export async function saveBlogPost(itemId: string, content: GeneratedContentStor
   }
 
   try {
-    const row = {
+    const row: Record<string, unknown> = {
       id: content.id,
       item_id: itemId,
       title: content.title,
@@ -152,16 +183,35 @@ export async function saveBlogPost(itemId: string, content: GeneratedContentStor
       user_id: null,
     };
 
+    // Include NeuronWriter analysis data if provided
+    if (neuronwriterData !== undefined) {
+      row.neuronwriter_data = neuronwriterData || null;
+    }
+
     const { error } = await getSupabaseClient()!
       .from(TABLE)
       .upsert(row, { onConflict: 'item_id' });
 
     if (error) {
+      // If the neuronwriter_data column doesn't exist yet, retry without it
+      if (error.message?.includes('neuronwriter_data') || error.code === '42703') {
+        console.warn('[ContentPersistence] neuronwriter_data column not found, saving without it. Run migration 002.');
+        delete row.neuronwriter_data;
+        const { error: retryError } = await getSupabaseClient()!
+          .from(TABLE)
+          .upsert(row, { onConflict: 'item_id' });
+        if (retryError) {
+          console.error('[ContentPersistence] Save error (retry):', retryError.message);
+          return false;
+        }
+        console.log(`[ContentPersistence] Saved blog post (without NeuronWriter data): ${content.title}`);
+        return true;
+      }
       console.error('[ContentPersistence] Save error:', error.message);
       return false;
     }
 
-    console.log(`[ContentPersistence] Saved blog post: ${content.title}`);
+    console.log(`[ContentPersistence] Saved blog post${neuronwriterData ? ' + NeuronWriter data' : ''}: ${content.title}`);
     return true;
   } catch (err) {
     console.error('[ContentPersistence] Save exception:', err);

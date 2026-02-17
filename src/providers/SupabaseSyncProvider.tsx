@@ -14,7 +14,7 @@ interface SupabaseSyncContextType {
   error: string | null;
   tableMissing: boolean;
   isOfflineMode: boolean;
-  saveToSupabase: (itemId: string, content?: any) => Promise<boolean>;
+  saveToSupabase: (itemId: string, content?: any, neuronwriterData?: any) => Promise<boolean>;
   deleteFromSupabase: (itemId: string) => Promise<boolean>;
   syncAllToSupabase: () => Promise<void>;
   loadFromSupabase: () => Promise<void>;
@@ -85,7 +85,7 @@ class ErrorBoundary extends Component<
 
 export function SupabaseSyncProvider({ children }: SupabaseSyncProviderProps) {
   // Determine configuration dynamically (never freeze at module import)
-  
+
 
   // Use try-catch wrapper for hook initialization
   let sync: SupabaseSyncContextType;

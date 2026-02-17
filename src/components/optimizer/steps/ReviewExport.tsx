@@ -537,7 +537,21 @@ export function ReviewExport() {
           gi.id === item.id ? { ...gi, status: 'completed', progress: 100 } : gi
         ));
 
-        saveToSupabase(item.id, contentToStore).catch(err => {
+        // SOTA: Save content + NeuronWriter data to Supabase together
+        const neuronDataToSave = result.neuronWriterAnalysis ? {
+          query_id: result.neuronWriterAnalysis.query_id,
+          keyword: result.neuronWriterAnalysis.keyword,
+          status: result.neuronWriterAnalysis.status,
+          terms: result.neuronWriterAnalysis.terms || [],
+          termsExtended: result.neuronWriterAnalysis.termsExtended,
+          entities: result.neuronWriterAnalysis.entities as any,
+          headingsH2: result.neuronWriterAnalysis.headingsH2 as any,
+          headingsH3: result.neuronWriterAnalysis.headingsH3 as any,
+          recommended_length: result.neuronWriterAnalysis.recommended_length,
+          content_score: result.neuronWriterAnalysis.content_score,
+        } : null;
+
+        saveToSupabase(item.id, contentToStore, neuronDataToSave).catch(err => {
           console.warn('[ReviewExport] Failed to save to Supabase:', err);
           toast.error(`Database save failed for "${item.title}". Content is preserved locally.`);
         });

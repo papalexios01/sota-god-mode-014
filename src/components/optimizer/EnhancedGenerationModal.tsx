@@ -1,6 +1,7 @@
 // ENHANCED GENERATION MODAL - SOTA Progress Tracking
 
 import { useState, useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import {
   Loader2, Check, AlertCircle, Sparkles, X,
   Brain, Search, Youtube, BookOpen, FileText,
@@ -171,7 +172,8 @@ export function EnhancedGenerationModal({
   const remainingItems = totalItems - completedItems;
   const estimatedRemaining = Math.round(avgTimePerItem * remainingItems);
 
-  return (
+  if (!isOpen) return null;
+  return createPortal(
     <div className="fixed inset-0 bg-black/80 backdrop-blur-xl z-50 flex items-center justify-center p-4 animate-in fade-in duration-300">
       <div className="glass-card border border-white/10 rounded-3xl w-full max-w-2xl shadow-2xl relative overflow-hidden">
         {/* Ambient Glow */}
@@ -418,7 +420,7 @@ export function EnhancedGenerationModal({
         }
       `}</style>
     </div>
-  );
+    , document.body);
 }
 
 export default EnhancedGenerationModal;

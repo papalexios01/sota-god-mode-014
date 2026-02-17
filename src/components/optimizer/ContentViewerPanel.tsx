@@ -3,6 +3,7 @@
 // Improvements: Structured NeuronWriter tab, enhanced internal links, beautiful design
 
 import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import {
   X, Copy, Check, Download, ExternalLink, Sparkles,
   FileText, Code, Search, BarChart3, Link2, Shield,
@@ -324,7 +325,7 @@ export function ContentViewerPanel({
 
   const displayContent = isEditorDirty ? editedContent : content;
 
-  return (
+  return createPortal(
     <div className={cn(
       "fixed bg-black/90 backdrop-blur-xl z-[60] flex flex-col transition-all duration-300",
       isFullscreen ? "inset-0" : "inset-4 rounded-3xl border border-white/10 shadow-2xl"
@@ -928,7 +929,7 @@ export function ContentViewerPanel({
         </div>
       )}
     </div>
-  );
+    , document.body);
 }
 
 // ═══════════════════════════════════════════════════════════════════

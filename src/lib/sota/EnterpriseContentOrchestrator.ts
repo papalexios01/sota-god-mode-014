@@ -60,6 +60,16 @@ import {
 } from './NeuronWriterService';
 import { ContentPostProcessor } from './ContentPostProcessor';
 
+import {
+  buildMasterSystemPrompt,
+  buildMasterUserPrompt,
+  buildContinuationPrompt,
+  buildSelfCritiquePrompt,
+  type ContentPromptConfig,
+} from './prompts/masterContentPrompt';
+import { removeAIPatterns } from './ContentPostProcessor';
+
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // CONSTANTS & CONFIGURATION
 // ═══════════════════════════════════════════════════════════════════════════════

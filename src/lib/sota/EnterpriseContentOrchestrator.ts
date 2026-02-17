@@ -1,12 +1,13 @@
 // src/lib/sota/EnterpriseContentOrchestrator.ts
 // ═══════════════════════════════════════════════════════════════════════════════
-// ENTERPRISE CONTENT ORCHESTRATOR v4.0 — SOTA Full Workflow Management
+// ENTERPRISE CONTENT ORCHESTRATOR v5.0 — SOTA Full Workflow Management
 // ═══════════════════════════════════════════════════════════════════════════════
 //
-// Changelog v4.0:
-//   • Integrated structured NeuronWriter sections (basic/extended/entities/headings)
-//   • SOTA internal link engine with relevance scoring + position distribution
-//   • Intelligent NeuronWriter improvement loop with adaptive strategy selection
+// Changelog v5.0:
+//   • UNIFIED PROMPT SYSTEM: Now uses masterContentPrompt.ts for all prompts
+//     (generation, continuation, self-critique) instead of inline duplicates
+//   • Dual-pass AI phrase removal (QualityValidator + ContentPostProcessor)
+//   • Removed duplicate buildSystemPrompt() method
 //   • Enterprise-grade telemetry, circuit breakers, and retry policies
 //   • Visual break enforcement via ContentPostProcessor (max 200 consecutive <p> words)
 //   • Readability polish pass (polishReadability + validateVisualBreaks)
@@ -17,7 +18,7 @@
 // Architecture:
 //   Phase 1 — Parallel Research (SERP, YouTube, References, NeuronWriter)
 //   Phase 2 — AI Content Generation (with long-form continuation loop)
-//   Phase 3 — Post-Processing Pipeline (10 sub-steps, all fault-tolerant)
+//   Phase 3 — Post-Processing Pipeline (10+ sub-steps, all fault-tolerant)
 //   Phase 4 — Quality Validation & E-E-A-T Assessment
 //   Phase 5 — Schema, Metadata & Final Assembly
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -59,7 +60,7 @@ import {
   type NeuronWriterAnalysis
 } from './NeuronWriterService';
 import { ContentPostProcessor } from './ContentPostProcessor';
-
+import { removeAIPatterns } from './ContentPostProcessor';
 import {
   buildMasterSystemPrompt,
   buildMasterUserPrompt,
@@ -67,8 +68,6 @@ import {
   buildSelfCritiquePrompt,
   type ContentPromptConfig,
 } from './prompts/masterContentPrompt';
-import { removeAIPatterns } from './ContentPostProcessor';
-
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // CONSTANTS & CONFIGURATION
@@ -100,24 +99,6 @@ const TARGET_INTERNAL_LINKS = 12;
 
 /** Minimum words for content to be considered valid */
 const MIN_VALID_CONTENT_LENGTH = 100;
-
-/** AI-detected phrases that kill authenticity */
-const AI_BANNED_WORDS = [
-  'delve', 'navigate', 'landscape', 'realm', 'crucial', 'vital',
-  'leverage', 'utilize', 'facilitate', 'seamlessly', 'holistic', 'robust',
-  'tapestry', 'embark', 'journey', 'embrace', 'elevate', 'unlock', 'master',
-  'moreover', 'furthermore', 'additionally', 'consequently', 'subsequently',
-  'nevertheless', 'notwithstanding', 'henceforth', 'thereby', 'therein',
-  'thereof', 'wherein', 'whilst', 'amongst', 'endeavor', 'commence',
-  'constitutes', 'necessitate', 'pertaining', 'paramount', 'pivotal',
-  'myriad', 'plethora', 'multitude', 'encompasses', 'revolutionize',
-  'transformative', 'groundbreaking', 'cutting-edge', 'state-of-the-art',
-  'synergy', 'paradigm', 'overarching', 'underpinning', 'noteworthy',
-  'indispensable', 'invaluable', 'unparalleled', 'unprecedented',
-  'spearhead', 'foster', 'bolster', 'harness', 'garner', 'propel',
-  'catapult', 'underscore', 'underscores', 'epitomize', 'epitomizes',
-  'burgeoning', 'juxtaposition', 'dichotomy', 'conundrum', 'quintessential',
-];
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // TYPES
@@ -175,15 +156,9 @@ interface OrchestratorTelemetry {
 // MARKDOWN → HTML CONVERTER
 // ═══════════════════════════════════════════════════════════════════════════════
 
-/**
- * CRITICAL: Convert any markdown syntax to proper styled HTML.
- * Handles: H1-H4, bold, italic, links, lists, code blocks, blockquotes, HR.
- * Only runs when markdown artifacts are detected in AI output.
- */
 function convertMarkdownToHTML(content: string): string {
   let html = content;
 
-  // Headings (most specific first to avoid double-matching)
   html = html.replace(/^####\s+([^\n#<]+)$/gm,
     '<h4 style="color: #334155; font-size: 19px; font-weight: 700; margin: 32px 0 12px 0; line-height: 1.3;">$1</h4>');
   html = html.replace(/^###\s+([^\n#<]+)$/gm,
@@ -261,15 +236,6 @@ function convertMarkdownToHTML(content: string): string {
 // HTML STRUCTURE ENFORCER
 // ═══════════════════════════════════════════════════════════════════════════════
 
-/**
- * Ensure proper HTML structure for WordPress:
- * - Fix nested <p> tags
- * - Add spacing between block elements
- * - Style unstyled headings
- * - Fix heading hierarchy (no skipping levels)
- * - Wrap in SOTA content container
- * - Style unstyled block-level elements
- */
 function ensureProperHTMLStructure(content: string): string {
   let html = content;
 
@@ -308,7 +274,6 @@ function ensureProperHTMLStructure(content: string): string {
     lastLevel = level;
   }
 
-  // Apply fixes in reverse order to preserve indices
   for (let i = fixes.length - 1; i >= 0; i--) {
     const fix = fixes[i];
     const searchFrom = html.substring(fix.index);
@@ -322,7 +287,7 @@ function ensureProperHTMLStructure(content: string): string {
     }
   }
 
-  // Wrap in SOTA content container (let WordPress theme control width)
+  // Wrap in SOTA content container
   if (!html.includes('data-premium-wp') && !html.includes('data-sota-content')) {
     const wrapperStart =
       '<div data-sota-content="true" style="font-family: \'Inter\', ui-sans-serif, system-ui, -apple-system, \'Segoe UI\', Roboto, Helvetica, Arial, sans-serif; line-height: 1.75; color: #1e293b; -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale;">';
@@ -497,45 +462,85 @@ export class EnterpriseContentOrchestrator {
     return lowQuality.some(d => domain.includes(d));
   }
 
-  /**
-   * Check if content has markdown artifacts that need conversion.
-   */
   private hasMarkdownArtifacts(content: string): boolean {
     return /^#{1,4}\s/m.test(content) ||
       /\*\*[^*]+\*\*/.test(content) ||
       /\[.+?\]\(.+?\)/.test(content);
   }
 
-  /**
-   * Count existing anchor tags in HTML content.
-   */
   private countExistingLinks(html: string): number {
     const matches = html.match(/<a\s[^>]*href\s*=\s*["'][^"']*["'][^>]*>/gi) || [];
     return matches.length;
   }
 
   // ─────────────────────────────────────────────────────────────────────────
-  // LONG-FORM CONTENT CONTINUATION ENGINE
+  // v5.0 NEW: MASTER PROMPT HELPERS
   // ─────────────────────────────────────────────────────────────────────────
 
   /**
-   * Ensures content meets the target word count by requesting continuations
-   * from the AI model when content is too short or explicitly incomplete.
-   *
-   * Features:
-   * - Adaptive continuation count based on target word count
-   * - Deduplication detection to avoid repetitive content
-   * - Graceful degradation with word count warnings
+   * Maps the orchestrator's content type to the master prompt's content type taxonomy.
    */
+  private mapContentType(
+    type?: 'guide' | 'how-to' | 'comparison' | 'listicle' | 'deep-dive'
+  ): ContentPromptConfig['contentType'] {
+    const map: Record<string, ContentPromptConfig['contentType']> = {
+      'guide': 'pillar',
+      'deep-dive': 'pillar',
+      'how-to': 'single',
+      'comparison': 'single',
+      'listicle': 'cluster',
+    };
+    return map[type || ''] || 'single';
+  }
+
+  /**
+   * Builds a ContentPromptConfig for the master prompt system from orchestrator state.
+   */
+  private buildPromptConfig(
+    keyword: string,
+    title: string,
+    options: GenerationOptions,
+    serpAnalysis: SERPAnalysis,
+    targetWordCount: number,
+    neuronTermPrompt?: string,
+    videos?: YouTubeVideo[],
+  ): ContentPromptConfig {
+    return {
+      primaryKeyword: keyword,
+      secondaryKeywords: serpAnalysis.semanticEntities.slice(0, 10),
+      title,
+      contentType: this.mapContentType(options.contentType),
+      targetWordCount,
+      neuronWriterSection: neuronTermPrompt,
+      internalLinks: (this.config.sitePages || []).slice(0, 12).map(p => ({
+        anchor: p.title,
+        url: p.url,
+      })),
+      serpData: {
+        competitorTitles: serpAnalysis.topCompetitors.map(c => c.title),
+        peopleAlsoAsk: serpAnalysis.contentGaps.slice(0, 8),
+        avgWordCount: serpAnalysis.avgWordCount,
+      },
+      youtubeEmbed: videos && videos.length > 0
+        ? { videoId: videos[0].id, title: videos[0].title }
+        : undefined,
+    };
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // LONG-FORM CONTENT CONTINUATION ENGINE (v5.0: uses master continuation prompt)
+  // ─────────────────────────────────────────────────────────────────────────
+
   private async ensureLongFormComplete(params: {
     keyword: string;
     title: string;
-    systemPrompt: string;
+    promptConfig: ContentPromptConfig;
     model: AIModel;
     currentHtml: string;
     targetWordCount: number;
   }): Promise<string> {
-    const { keyword, title, systemPrompt, model, targetWordCount } = params;
+    const { keyword, title, promptConfig, model, targetWordCount } = params;
+    const systemPrompt = buildMasterSystemPrompt();
 
     let html = this.stripModelContinuationArtifacts(params.currentHtml);
     let words = this.countWordsFromHtml(html);
@@ -567,23 +572,8 @@ export class EnterpriseContentOrchestrator {
 
       this.telemetry.continuationRounds++;
 
-      const tail = html.slice(-3000);
-      const continuationPrompt = `Continue the SAME HTML article titled "${title}" about "${keyword}" EXACTLY where it left off. You still need approximately ${remainingWords} more words.
-
-Rules (MUST FOLLOW):
-- Output ONLY the HTML continuation (no preface, no apology, no brackets, no notes)
-- Do NOT repeat the H1 or reprint earlier sections
-- Do NOT ask questions like "Would you like me to continue?"
-- Keep the same tone, formatting, and premium boxes/tables
-- Add DEPTH: include real data points, specific examples, expert quotes, pro tip boxes, and comparison tables
-- Each new section MUST add genuine value — no padding or filler
-- Finish the article fully (including the FAQ section with 8 questions + final CTA as instructed)
-- CRITICAL: Never write more than ${MAX_CONSECUTIVE_P_WORDS} words of consecutive <p> text without a visual break element (box, table, blockquote, list)
-
-Last part of the current article (for context):
-${tail}
-
-Now continue:`;
+      // USE MASTER CONTINUATION PROMPT (structured, with NW term reminders)
+      const continuationPrompt = buildContinuationPrompt(promptConfig, html, words);
 
       try {
         const next = await this.engine.generateWithModel({
@@ -620,7 +610,7 @@ Now continue:`;
     }
 
     if (words < minTargetWords) {
-      this.warn(`Final content is ${words} words (${Math.round(words / minTargetWords * 100)}%), below target of ${minTargetWords}. May need regeneration.`);
+      this.warn(`Final content is ${words} words (${Math.round(words / minTargetWords * 100)}%), below target of ${minTargetWords}.`);
     } else {
       this.log(`Long-form content complete: ${words} words ✅`);
     }
@@ -632,13 +622,6 @@ Now continue:`;
   // NEURONWRITER INITIALIZATION & POLLING
   // ─────────────────────────────────────────────────────────────────────────
 
-  /**
-   * Initializes NeuronWriter integration:
-   * 1. Checks for existing query matching the keyword
-   * 2. Creates a new query if none found
-   * 3. Polls until analysis is ready (up to ~4 minutes)
-   * 4. Returns the analysis bundle or null on failure
-   */
   private async maybeInitNeuronWriter(
     keyword: string,
     options: GenerationOptions
@@ -690,7 +673,7 @@ Now continue:`;
         this.warn(`NeuronWriter: Search failed (${searchErr}), will create new query`);
       }
 
-      // Step 2: Create new query if needed — with retry to prevent silent fallback
+      // Step 2: Create new query if needed
       if (!queryId) {
         const MAX_CREATE_RETRIES = 3;
         for (let createAttempt = 1; createAttempt <= MAX_CREATE_RETRIES; createAttempt++) {
@@ -722,7 +705,7 @@ Now continue:`;
       this.log(`NeuronWriter: Using provided query ID: ${queryId}`);
     }
 
-    // Step 3: Poll for analysis readiness — extended with resilient retry
+    // Step 3: Poll for analysis readiness
     let lastStatus = '';
     let consecutivePollErrors = 0;
     const MAX_CONSECUTIVE_POLL_ERRORS = 5;
@@ -782,16 +765,6 @@ Now continue:`;
   // NEURONWRITER IMPROVEMENT LOOP
   // ─────────────────────────────────────────────────────────────────────────
 
-  /**
-   * Iteratively improves content to achieve NeuronWriter target score.
-   *
-   * Strategy:
-   * - Evaluates current content score via NeuronWriter API
-   * - Uses PATCH mode for long content (>10k chars) — adds enrichment paragraphs
-   * - Uses FULL REWRITE mode for shorter content — rewrites with missing terms
-   * - Falls back to semantic enrichment when no specific missing terms are found
-   * - Stops on: target met, max attempts, stagnation, or error
-   */
   private async runNeuronWriterImprovementLoop(
     neuron: NeuronBundle,
     currentContent: string,
@@ -803,7 +776,6 @@ Now continue:`;
     let previousScore = 0;
     let stagnantRounds = 0;
 
-    // Combine all term sources for suggestions
     const allTermsForSuggestions = [
       ...neuron.analysis.terms,
       ...(neuron.analysis.termsExtended || []),
@@ -821,14 +793,12 @@ Now continue:`;
       this.telemetry.neuronWriterAttempts++;
 
       try {
-        // Evaluate current content
         const evalRes = await neuron.service.evaluateContent(neuron.queryId, {
           html: content,
           title,
         });
 
         if (!evalRes.success || typeof evalRes.contentScore !== 'number') {
-          // Fall back to local score calculation
           neuron.analysis.content_score = neuron.service.calculateContentScore(
             content,
             neuron.analysis.terms || []
@@ -843,19 +813,16 @@ Now continue:`;
         neuron.analysis.content_score = currentScore;
         this.telemetry.neuronWriterFinalScore = currentScore;
 
-        // Check if target met
         if (currentScore >= NW_TARGET_SCORE) {
           this.log(`NeuronWriter: Score ${currentScore}% ≥ target ${NW_TARGET_SCORE}% — PASSED ✅`);
           return { content, score: currentScore };
         }
 
-        // Check if max attempts reached
         if (attempt === NW_MAX_IMPROVEMENT_ATTEMPTS) {
           this.log(`NeuronWriter: Score ${currentScore}% after ${attempt} attempts (target was ${NW_TARGET_SCORE}%)`);
           return { content, score: currentScore };
         }
 
-        // Stagnation detection
         if (currentScore <= previousScore && attempt > 0) {
           stagnantRounds++;
           if (stagnantRounds >= NW_MAX_STAGNANT_ROUNDS) {
@@ -870,12 +837,10 @@ Now continue:`;
         const gap = NW_TARGET_SCORE - currentScore;
         this.log(`NeuronWriter: Score ${currentScore}% (need +${gap}%) — improving... (attempt ${attempt + 1}/${NW_MAX_IMPROVEMENT_ATTEMPTS})`);
 
-        // Get optimization suggestions
         const suggestions = neuron.service.getOptimizationSuggestions(content, allTermsForSuggestions);
         const entitySuggestions = neuron.service.getOptimizationSuggestions(content, entityTerms);
         const allSuggestions = [...suggestions, ...entitySuggestions.slice(0, 10)];
 
-        // Find missing headings
         const missingHeadings = (neuron.analysis.headingsH2 || [])
           .filter(h => !content.toLowerCase().includes(h.text.toLowerCase().slice(0, 20)))
           .slice(0, 3);
@@ -886,7 +851,6 @@ Now continue:`;
             content, keyword, title, allSuggestions, missingHeadings, attempt
           );
         } else {
-          // No specific missing terms — try semantic enrichment
           this.log('No missing terms found — attempting semantic enrichment...');
           content = await this.applySemanticEnrichment(
             content, keyword, currentScore, allTermsForSuggestions
@@ -901,9 +865,6 @@ Now continue:`;
     return { content, score: currentScore };
   }
 
-  /**
-   * Applies NeuronWriter term improvements using either patch or full rewrite mode.
-   */
   private async applyNeuronWriterImprovement(
     content: string,
     keyword: string,
@@ -915,7 +876,6 @@ Now continue:`;
     const usePatchMode = content.length > 10000;
 
     if (usePatchMode) {
-      // PATCH MODE: Add enrichment paragraphs without rewriting existing content
       const termsPerAttempt = Math.min(30, suggestions.length);
       const termsList = suggestions.slice(0, termsPerAttempt);
 
@@ -956,7 +916,6 @@ Output ONLY the new HTML content to INSERT.`;
         this.warn(`NeuronWriter PATCH failed: ${patchErr}`);
       }
     } else {
-      // FULL REWRITE MODE: Rewrite the entire article with missing terms incorporated
       const termsPerAttempt = Math.min(40, suggestions.length);
       const termsList = suggestions.slice(0, termsPerAttempt);
 
@@ -1010,12 +969,9 @@ Return the COMPLETE improved article with ALL missing terms naturally incorporat
       }
     }
 
-    return content; // Return unchanged if all strategies failed
+    return content;
   }
 
-  /**
-   * Applies semantic enrichment when no specific missing terms are identified.
-   */
   private async applySemanticEnrichment(
     content: string,
     keyword: string,
@@ -1067,13 +1023,9 @@ ${content}`;
   }
 
   // ─────────────────────────────────────────────────────────────────────────
-  // SELF-CRITIQUE ENGINE
+  // SELF-CRITIQUE ENGINE (v5.0: uses master self-critique prompt)
   // ─────────────────────────────────────────────────────────────────────────
 
-  /**
-   * Single-pass self-critique that checks for missing NeuronWriter terms,
-   * entities, and headings, then either patches (long content) or edits.
-   */
   private async selfCritiqueAndPatch(params: {
     keyword: string;
     title: string;
@@ -1087,7 +1039,6 @@ ${content}`;
     const requiredEntities = params.requiredEntities || [];
     const requiredHeadings = params.requiredHeadings || [];
 
-    // Find what's missing
     const missingTerms = requiredTerms.filter(t =>
       !new RegExp(`\\b${t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i').test(originalHtml)
     );
@@ -1114,47 +1065,34 @@ ${content}`;
       );
     }
 
-    // SHORT/MEDIUM content — inline edit mode
-    const instruction = [
-      'Rewrite ONLY where needed. Keep structure. Output HTML only.',
-      'Voice: Alex Hormozi + Tim Ferriss. No fluff. Short paragraphs.',
-      'Add concrete steps, checklists, examples. Remove vague filler.',
-      `CRITICAL: Never write more than ${MAX_CONSECUTIVE_P_WORDS} words of <p> text without a visual break element.`,
-      missingTerms.length
-        ? `Add these missing NeuronWriter terms naturally: ${missingTerms.slice(0, 40).join(', ')}`
-        : '',
-      missingEntities.length
-        ? `Include these entities naturally: ${missingEntities.slice(0, 40).join(', ')}`
-        : '',
-      missingHeadings.length
-        ? `Add these missing H2 sections if absent: ${missingHeadings.slice(0, 6).join(' | ')}`
-        : '',
-    ].filter(Boolean).join('\n');
+    // SHORT/MEDIUM content — use master self-critique prompt
+    const promptConfig: ContentPromptConfig = {
+      primaryKeyword: params.keyword,
+      secondaryKeywords: [],
+      title: params.title,
+      contentType: 'single',
+      targetWordCount: this.countWordsFromHtml(originalHtml),
+    };
+
+    const critiquePrompt = buildSelfCritiquePrompt(
+      promptConfig,
+      originalHtml,
+      missingTerms.length > 0 ? missingTerms.slice(0, 40) : undefined,
+      missingEntities.length > 0 ? missingEntities.slice(0, 40) : undefined,
+      missingHeadings.length > 0 ? missingHeadings.slice(0, 6) : undefined,
+    );
 
     const neededTokens = originalHtml.length > 20000 ? 16384 : 8192;
 
     try {
-      const timeoutMs = Math.min(300000, 120000 + Math.floor(originalHtml.length / 5000) * 30000);
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-
       const res = await this.engine.generateWithModel({
-        prompt: `ARTICLE TITLE: ${params.title}
-PRIMARY KEYWORD: ${params.keyword}
-
-CURRENT HTML (EDIT THIS, DO NOT REWRITE FROM SCRATCH):
-${originalHtml}
-
-INSTRUCTIONS:
-${instruction}`,
+        prompt: critiquePrompt,
         model: this.config.primaryModel || 'gemini',
         apiKeys: this.config.apiKeys,
-        systemPrompt: 'Elite editor. Output PURE HTML ONLY. Do not add markdown.',
+        systemPrompt: buildMasterSystemPrompt(),
         temperature: 0.55,
         maxTokens: neededTokens,
       });
-
-      clearTimeout(timeoutId);
 
       const improved = (res.content || '').trim();
       if (!improved) {
@@ -1176,11 +1114,6 @@ ${instruction}`,
     }
   }
 
-  /**
-   * Patch mode for self-critique — used for long content (>15k chars).
-   * Generates new sections for missing headings and enrichment paragraphs for missing terms,
-   * then inserts them before the conclusion.
-   */
   private async selfCritiquePatchMode(
     html: string,
     keyword: string,
@@ -1268,10 +1201,6 @@ Output ONLY the HTML paragraphs, nothing else.`;
     return result;
   }
 
-  /**
-   * Last-resort NeuronWriter coverage enforcement.
-   * Logs any terms that could not be naturally incorporated as an HTML comment.
-   */
   private enforceNeuronwriterCoverage(
     html: string,
     req: { requiredTerms: string[]; entities: string[]; h2: string[] }
@@ -1294,7 +1223,6 @@ Output ONLY the HTML paragraphs, nothing else.`;
     const insertion = `\n<!-- NeuronWriter Coverage Terms: ${chunk.map(this.escapeHtml).join(', ')} -->`;
     this.warn(`${chunk.length} NeuronWriter terms could not be naturally incorporated — logged as HTML comment`);
 
-    // Insert after the last H2 tag
     const h2Regex = /<h2[^>]*>[^<]*<\/h2>/gis;
     let lastMatch: RegExpExecArray | null = null;
     let match: RegExpExecArray | null;
@@ -1310,9 +1238,6 @@ Output ONLY the HTML paragraphs, nothing else.`;
     return `${html}\n\n${insertion}`;
   }
 
-  /**
-   * Extracts structured requirements from NeuronWriter analysis.
-   */
   private extractNeuronRequirements(neuron: NeuronWriterAnalysis | null): {
     requiredTerms: string[];
     entities: string[];
@@ -1336,10 +1261,6 @@ Output ONLY the HTML paragraphs, nothing else.`;
   // INTERNAL LINK INJECTION
   // ─────────────────────────────────────────────────────────────────────────
 
-  /**
-   * Ensures content has 4-8 internal links. Checks existing count first,
-   * then injects only the needed additional links.
-   */
   private injectInternalLinks(content: string, options: GenerationOptions): string {
     if (options.injectLinks === false) return content;
     if (!this.config.sitePages || this.config.sitePages.length === 0) {
@@ -1350,7 +1271,6 @@ Output ONLY the HTML paragraphs, nothing else.`;
     try {
       this.linkEngine.updateSitePages(this.config.sitePages);
 
-      // Count only INTERNAL links (matching our site's domain), not external refs
       const siteDomains = new Set<string>();
       for (const page of this.config.sitePages) {
         try { siteDomains.add(new URL(page.url).hostname.toLowerCase()); } catch { /* skip */ }
@@ -1397,10 +1317,6 @@ Output ONLY the HTML paragraphs, nothing else.`;
   // REFERENCES & E-E-A-T
   // ─────────────────────────────────────────────────────────────────────────
 
-  /**
-   * Preserves the references section from content before NeuronWriter/self-critique loops,
-   * returns the extracted section and the content without it.
-   */
   private preserveReferencesSection(content: string): { content: string; references: string | null } {
     const referencesRegex = /<!-- SOTA References Section -->[\s\S]*$/i;
     const refsAltRegex = /<hr>\s*<h2>References[\s\S]*$/i;
@@ -1416,11 +1332,7 @@ Output ONLY the HTML paragraphs, nothing else.`;
     return { content: stripped, references: match[0] };
   }
 
-  /**
-   * Appends a beautifully styled references section to the content.
-   */
   private ensureReferencesSection(html: string, refs: Reference[], serp: SERPAnalysis): string {
-    // Check if references already exist
     const hasRefsHeading =
       /<h2[^>]*>\s*(references|sources|citations|bibliography)\s*<\/h2>/i.test(html) ||
       /References\s*<\/h2>/i.test(html) ||
@@ -1431,7 +1343,6 @@ Output ONLY the HTML paragraphs, nothing else.`;
       return html;
     }
 
-    // Build reference items from multiple sources
     const items: { title: string; url: string; domain: string; type: string }[] = [];
 
     for (const r of refs || []) {
@@ -1450,7 +1361,6 @@ Output ONLY the HTML paragraphs, nothing else.`;
       }
     }
 
-    // Deduplicate by URL
     const dedup = new Map<string, typeof items[0]>();
     for (const it of items) {
       const key = (it.url || '').toLowerCase().trim().replace(/\/$/, '');
@@ -1460,7 +1370,6 @@ Output ONLY the HTML paragraphs, nothing else.`;
 
     let finalItems = Array.from(dedup.values());
 
-    // Sort by authority score
     finalItems.sort((a, b) => {
       const scoreA = this.getReferenceAuthorityScore(a.domain, a.type);
       const scoreB = this.getReferenceAuthorityScore(b.domain, b.type);
@@ -1660,148 +1569,7 @@ Output ONLY the meta description, nothing else.`;
   }
 
   // ─────────────────────────────────────────────────────────────────────────
-  // SYSTEM PROMPT BUILDER
-  // ─────────────────────────────────────────────────────────────────────────
-
-  /**
-   * Builds the comprehensive system prompt for the AI content generation model.
-   * This is the core of content quality — it defines voice, formatting, and quality targets.
-   */
-  private buildSystemPrompt(): string {
-    const availableInternalUrls = (this.config.sitePages || [])
-      .slice(0, 40)
-      .map(p => `- ${p.url} — "${p.title}"`)
-      .join('\n');
-
-    return `You are a human writer. Not an AI. Not a content assistant. A real person who has done the actual work, made the mistakes, and learned the hard lessons.
-
-YOUR IDENTITY: You are a senior practitioner — someone who's spent years in this field. You write the way you'd explain something to a smart colleague at a whiteboard. You use real examples from real experience. You have opinions and you're not afraid to share them.
-
-VOICE RULES — THE #1 PRIORITY (violating these is worse than missing SEO terms):
-
-1. SENTENCE RHYTHM: Vary aggressively. Short punch. Then a longer sentence that unpacks the idea with a specific detail or example. Fragment. Another medium one. Never let three sentences in a row have similar length.
-
-2. CONTRACTIONS MANDATORY: don't, won't, can't, it's, that's, we're, you'll, they've, doesn't, isn't, here's, there's, who's, what's. EVERY single time. Writing "it is" instead of "it's" is an automatic fail.
-
-3. PARAGRAPH CADENCE: 1-3 sentences max per paragraph. Single-sentence paragraphs are powerful — use them for emphasis. Never stack 4+ sentences in one paragraph.
-
-4. OPENER VARIETY: Never start two consecutive paragraphs the same way. Rotate between: a statement of fact, a question, a short fragment, a number/data point, a "Here's the thing:" style opener, a direct "you" address.
-
-5. CONVERSATIONAL TEXTURE: Write the way humans actually talk:
-   - Dashes for asides — like this one — instead of parenthetical commas
-   - "Look, ..." / "Here's what most people get wrong:" / "Real talk:" / "I'll be blunt:"
-   - Self-corrections: "Well, technically..." / "Actually, that's not quite right—"
-   - Casual connectors: "But here's the catch." / "So what does that mean?" / "And that changes everything."
-   - Mild profanity/emphasis where appropriate: "damn good", "the hard truth", "brutal honesty"
-
-6. SPECIFICITY OVER GENERALITY: Never say "many companies" — say "73% of mid-market SaaS companies." Never say "it can help" — say "it cut our bounce rate from 67% to 31% in 6 weeks." Never say "experts agree" — say "Dr. Sarah Chen at Stanford found that..."
-
-7. OPINION & PERSONALITY: Have a point of view. "Most guides tell you X. That's wrong. Here's why." Show intellectual honesty: "I used to think X. Then I tested it. The data changed my mind."
-
-8. ANTI-AI PHRASING — THESE WORDS/PATTERNS ARE BANNED (using any = instant failure):
-${AI_BANNED_WORDS.map(w => `   ❌ "${w}"`).join('\n')}
-
-   Also banned patterns:
-   ❌ "In today's [anything]" / "In the ever-[anything]"
-   ❌ "It's important to note" / "It's worth mentioning" / "It should be noted"
-   ❌ "Whether you're a beginner or expert" / "Whether you're a seasoned"
-   ❌ "This comprehensive guide" / "In this article, we will"
-   ❌ "Look no further" / "You're not alone" / "Rest assured"
-   ❌ "A plethora of" / "A myriad of" / "A wealth of" / "A wide array of"
-   ❌ "Cannot be overstated" / "Plays a crucial role" / "Stands as a testament"
-   ❌ "Unlock the power/potential/secrets" / "Take X to the next level"
-   ❌ "Are you looking to" / "Have you ever wondered"
-   ❌ Starting any sentence with "Moreover," "Furthermore," "Additionally," "Consequently," "Subsequently,"
-
-9. TRANSITIONS: Use natural human transitions, not academic ones:
-   ✅ "But here's the catch." / "So what does this actually mean?" / "Now flip that."
-   ✅ "That said, ..." / "The problem? ..." / "And this is where it gets interesting."
-   ✅ "Quick reality check:" / "Let me break this down." / "Here's where most people screw up."
-   ❌ "Moreover," / "Furthermore," / "Additionally," / "In addition," / "Consequently,"
-
-10. READING LEVEL: Grade 6-8 Flesch-Kincaid. Short words. Short sentences. If a 12-year-old can't understand it, simplify it.
-
-SEO INTEGRATION (secondary to voice quality):
-- Primary keyword in first sentence, 2-3 H2 headings, ~every 300-400 words
-- Secondary keywords distributed across sections
-- NeuronWriter terms woven naturally — never forced or keyword-stuffed
-- H2 → H3 heading hierarchy, no skipped levels
-
-E-E-A-T SIGNALS (woven naturally, not forced):
-- Experience: "In practice, what I've seen is..." / "After running 200+ tests..."
-- Expertise: Correct terminology, edge cases, nuances competitors miss
-- Authority: Cite specific studies with year and source
-- Trust: Acknowledge limitations, present trade-offs honestly
-
-VISUAL BREAK RULE: Never write more than ${MAX_CONSECUTIVE_P_WORDS} words of consecutive <p> text without a visual HTML element (box, table, blockquote, list, stat highlight).
-
-PREMIUM STYLED HTML ELEMENTS — USE 6-8 THROUGHOUT:
-
-A. KEY TAKEAWAYS BOX (once, after intro):
-<div style="background: #ffffff; border: 2px solid #10b981; border-radius: 20px; padding: 32px 36px; margin: 40px 0; box-shadow: 0 8px 32px rgba(16, 185, 129, 0.12); position: relative; overflow: hidden; max-width: 100%; box-sizing: border-box;">
-  <div style="position: absolute; top: 0; left: 0; right: 0; height: 5px; background: linear-gradient(90deg, #10b981 0%, #06b6d4 50%, #8b5cf6 100%);"></div>
-  <h3 style="color: #0f172a; margin: 8px 0 24px 0; font-size: 22px; font-weight: 900;">🎯 The Bottom Line</h3>
-  <ul style="color: #1e293b; margin: 0; padding-left: 0; font-size: 17px; line-height: 1.9; list-style: none;">
-    <li style="margin-bottom: 14px; padding: 12px 16px 12px 44px; position: relative; background: #f0fdf4; border-radius: 10px;"><span style="position: absolute; left: 14px; top: 13px; color: #10b981; font-weight: 800; font-size: 18px;">✅</span> <strong>Key insight</strong></li>
-  </ul>
-</div>
-
-B. PRO TIP BOX (4-6 throughout):
-<div style="background: #ffffff; border: 1px solid #e0e7ff; border-left: 5px solid #6366f1; padding: 24px 28px; margin: 36px 0; border-radius: 0 16px 16px 0; box-shadow: 0 4px 20px rgba(99, 102, 241, 0.08); max-width: 100%; box-sizing: border-box;">
-  <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 14px;">
-    <span style="background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%); color: white; width: 32px; height: 32px; border-radius: 10px; display: inline-flex; align-items: center; justify-content: center; font-size: 16px;">💡</span>
-    <strong style="color: #3730a3; font-size: 17px; font-weight: 800;">Pro Tip</strong>
-  </div>
-  <p style="color: #334155; font-size: 17px; margin: 0; line-height: 1.8;">Tip here.</p>
-</div>
-
-C. WARNING BOX (1-2):
-<div style="background: #ffffff; border: 1px solid #fecaca; border-left: 5px solid #ef4444; padding: 24px 28px; margin: 36px 0; border-radius: 0 16px 16px 0; box-shadow: 0 4px 20px rgba(239, 68, 68, 0.08); max-width: 100%; box-sizing: border-box;">
-  <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 14px;">
-    <span style="background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%); color: white; width: 32px; height: 32px; border-radius: 10px; display: inline-flex; align-items: center; justify-content: center; font-size: 16px;">⚠️</span>
-    <strong style="color: #991b1b; font-size: 17px; font-weight: 800;">Warning</strong>
-  </div>
-  <p style="color: #334155; font-size: 17px; margin: 0; line-height: 1.8;">Warning here.</p>
-</div>
-
-D. STAT HIGHLIGHT (2-3):
-<div style="background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%); border: 2px solid #e2e8f0; border-radius: 16px; padding: 28px 32px; margin: 36px 0; text-align: center; max-width: 100%; box-sizing: border-box;">
-  <div style="font-size: 48px; font-weight: 900; color: #0f172a; line-height: 1.1;">73%</div>
-  <div style="font-size: 16px; color: #64748b; margin-top: 8px;">stat description</div>
-  <div style="font-size: 13px; color: #94a3b8; margin-top: 6px;">Source: Report, 2025</div>
-</div>
-
-E. EXPERT QUOTE (2-3):
-<blockquote style="border-left: 4px solid #8b5cf6; background: linear-gradient(135deg, #faf5ff 0%, #f5f3ff 100%); margin: 36px 0; padding: 28px 32px; border-radius: 0 16px 16px 0; position: relative; max-width: 100%; box-sizing: border-box;">
-  <p style="font-size: 18px; font-style: italic; color: #4c1d95; line-height: 1.8; margin: 0 0 16px 0;">"Quote here."</p>
-  <footer style="font-size: 15px; color: #7c3aed; font-weight: 700;">— Name, Title</footer>
-</blockquote>
-
-F. FAQ ACCORDION:
-<details style="margin: 12px 0; border: 1px solid #e2e8f0; border-radius: 12px; overflow: hidden; max-width: 100%; box-sizing: border-box;">
-  <summary style="padding: 18px 24px; background: #f8fafc; cursor: pointer; font-weight: 700; color: #0f172a; font-size: 17px; list-style: none; display: flex; justify-content: space-between; align-items: center;">
-    Question? <span style="font-size: 20px; color: #64748b;">+</span>
-  </summary>
-  <div style="padding: 16px 24px; color: #475569; font-size: 16px; line-height: 1.8; border-top: 1px solid #e2e8f0;">
-    Answer.
-  </div>
-</details>
-
-${availableInternalUrls ? `
-INTERNAL LINKS — EMBED 4-8 IN THE HTML:
-• 3-7 word descriptive anchor text
-• Styled: <a href="URL" style="color:#059669;text-decoration:underline;text-decoration-color:rgba(5,150,105,0.3);text-underline-offset:3px;font-weight:600;">anchor</a>
-• Spread across different H2 sections — never 2 links in the same paragraph
-
-AVAILABLE URLS:
-${availableInternalUrls}
-` : ''}
-
-OUTPUT: PURE HTML ONLY. No markdown. No code fences. No preamble. Start with the first <h2>.`;
-  }
-
-  // ─────────────────────────────────────────────────────────────────────────
-  // MAIN CONTENT GENERATION
+  // MAIN CONTENT GENERATION (v5.0: uses unified master prompt system)
   // ─────────────────────────────────────────────────────────────────────────
 
   private async generateMainContent(
@@ -1814,65 +1582,26 @@ OUTPUT: PURE HTML ONLY. No markdown. No code fences. No preamble. Start with the
     neuronTermPrompt?: string
   ): Promise<string> {
     const targetWordCount = options.targetWordCount || serpAnalysis.recommendedWordCount || 2500;
-    const systemPrompt = this.buildSystemPrompt();
 
-    const prompt = `Write a ${targetWordCount}+ word article about "${keyword}".
+    // BUILD PROMPTS USING UNIFIED MASTER PROMPT SYSTEM
+    const systemPrompt = buildMasterSystemPrompt();
+    const promptConfig = this.buildPromptConfig(
+      keyword, title, options, serpAnalysis, targetWordCount, neuronTermPrompt, videos,
+    );
+    const userPrompt = buildMasterUserPrompt(promptConfig);
 
-TITLE: ${title}
-
-CONTENT STRUCTURE:
-${serpAnalysis.recommendedHeadings.map((h, i) => `${i + 1}. ${h}`).join('\n')}
-
-CONTENT GAPS TO FILL:
-${serpAnalysis.contentGaps.slice(0, 6).join('\n')}
-
-SEMANTIC KEYWORDS:
-${serpAnalysis.semanticEntities.slice(0, 18).join(', ')}
-
-${neuronTermPrompt ? `
-NEURONWRITER OPTIMIZATION — ${NW_TARGET_SCORE}%+ CONTENT SCORE REQUIRED:
-${neuronTermPrompt}
-` : ''}
-
-${videos.length > 0 ? `
-EMBED THESE VIDEOS (spread evenly):
-${videos.slice(0, 3).map((v, i) => `
-VIDEO ${i + 1}:
-<figure style="margin: 40px 0;">
-<div style="position: relative; padding-bottom: 56.25%; height: 0; overflow: hidden; max-width: 100%; border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.1);">
-<iframe width="560" height="315" src="https://www.youtube-nocookie.com/embed/${v.id}" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen style="position: absolute; top: 0; left: 0; width: 100%; height: 100%;"></iframe>
-</div>
-<figcaption style="text-align: center; color: #6b7280; font-size: 14px; margin-top: 12px;">🎬 ${v.title}</figcaption>
-</figure>
-`).join('\n')}
-` : ''}
-
-MANDATORY STRUCTURE:
-1. Hook Opening (no H1)
-2. Key Takeaways Box (5-7 bullets)
-3. 6-10 H2 Sections with 2-3 H3 each
-4. At least 4-6 Pro Tip / Warning boxes spread throughout
-5. At least 2 data tables
-6. At least 2-3 stat highlights
-7. At least 2 expert quotes
-8. FAQ section with 8 questions (use <details>/<summary>)
-9. Strong CTA conclusion
-10. 4-8 internal links evenly distributed across the article
-
-VISUAL BREAK RULE: Between every pair of visual elements (box, table, blockquote, list, figure), there must be NO MORE than ${MAX_CONSECUTIVE_P_WORDS} words of <p> text. If any gap exceeds ~150 words, insert a styled element.
-
-Write the complete article now. Output ONLY HTML.`;
+    this.log(`Using master prompt system — ${userPrompt.length} char user prompt`);
 
     let result;
     if (this.config.useConsensus && !neuronTermPrompt && this.engine.getAvailableModels().length > 1) {
       this.log('Using multi-model consensus generation...');
-      const consensusResult = await this.engine.generateWithConsensus(prompt, systemPrompt);
+      const consensusResult = await this.engine.generateWithConsensus(userPrompt, systemPrompt);
       result = { content: consensusResult.finalContent };
     } else {
       const initialMaxTokens = targetWordCount >= 5000 ? 32768 :
         targetWordCount >= 3000 ? 16384 : 8192;
       result = await this.engine.generateWithModel({
-        prompt,
+        prompt: userPrompt,
         model: this.config.primaryModel || 'gemini',
         apiKeys: this.config.apiKeys,
         systemPrompt,
@@ -1881,18 +1610,20 @@ Write the complete article now. Output ONLY HTML.`;
       });
     }
 
-    // Ensure content meets target word count
+    // Ensure content meets target word count using master continuation prompt
     let finalContent = await this.ensureLongFormComplete({
       keyword,
       title,
-      systemPrompt,
+      promptConfig,
       model: this.config.primaryModel || 'gemini',
       currentHtml: result.content,
       targetWordCount,
     });
 
-    // Inject videos if not already embedded
-    if (videos.length > 0 && !finalContent.includes('youtube.com/embed') && !finalContent.includes('youtube-nocookie.com/embed')) {
+    // Inject videos if not already embedded by the LLM
+    if (videos.length > 0 &&
+        !finalContent.includes('youtube.com/embed') &&
+        !finalContent.includes('youtube-nocookie.com/embed')) {
       const videoSection = this.buildVideoSection(videos);
       finalContent = this.insertBeforeConclusion(finalContent, videoSection);
       this.log('Injected YouTube video section');
@@ -1960,7 +1691,7 @@ Write the complete article now. Output ONLY HTML.`;
       serpAnalysis = this.getDefaultSerpAnalysis(options.keyword);
     }
 
-    // SOTA FAILSAFE: If NeuronWriter is configured but init failed, retry once before proceeding
+    // SOTA FAILSAFE: If NeuronWriter is configured but init failed, retry once
     const nwConfigured = !!(this.config.neuronWriterApiKey?.trim()) && !!(this.config.neuronWriterProjectId?.trim());
     if (nwConfigured && !neuron) {
       this.log('NeuronWriter: Configured but failed to init — retrying once...');
@@ -2040,16 +1771,17 @@ Write the complete article now. Output ONLY HTML.`;
     this.log(`Phase 2 complete in ${(phase2Ms / 1000).toFixed(1)}s — ${this.countWordsFromHtml(content)} words generated`);
 
     // ═════════════════════════════════════════════════════════════════════
-    // PHASE 3: POST-PROCESSING PIPELINE (10 fault-tolerant sub-steps)
+    // PHASE 3: POST-PROCESSING PIPELINE (fault-tolerant sub-steps)
     // ═════════════════════════════════════════════════════════════════════
     this.log('═══ Phase 3: Content Enhancement Pipeline ═══');
     const endPhase3Timer = this.startPhaseTimer('phase3_postprocessing');
     let enhancedContent = content;
 
-    // --- 3a: Remove AI phrases ---
+    // --- 3a: Remove AI phrases (dual-pass) ---
     try {
       enhancedContent = removeAIPhrases(enhancedContent);
-      this.log('3a: AI phrase removal complete');
+      enhancedContent = removeAIPatterns(enhancedContent);
+      this.log('3a: AI phrase removal complete (dual-pass)');
     } catch (e) {
       this.warn(`3a: removeAIPhrases failed (non-fatal): ${e}`);
     }
@@ -2119,7 +1851,6 @@ Write the complete article now. Output ONLY HTML.`;
     // --- 3e: Re-append preserved references ---
     try {
       if (savedReferences) {
-        // Remove any duplicated references before re-appending
         enhancedContent = enhancedContent
           .replace(/<!-- SOTA References Section -->[\s\S]*$/i, '')
           .replace(/<hr>\s*<h2>References[\s\S]*$/i, '')
@@ -2256,8 +1987,7 @@ Output ONLY the HTML. No markdown. No commentary.`;
     }
 
     const phase3Ms = endPhase3Timer();
-
-    this.log(`Phase 3 complete in ${(phase3Ms / 1000).toFixed(1)}s — all 10 post-processing steps executed`);
+    this.log(`Phase 3 complete in ${(phase3Ms / 1000).toFixed(1)}s — all post-processing steps executed`);
 
     // ═════════════════════════════════════════════════════════════════════
     // PHASE 4: QUALITY VALIDATION
@@ -2301,7 +2031,6 @@ Output ONLY the HTML. No markdown. No commentary.`;
 
       this.log(`Quality Score: ${qualityScore.overall}% | E-E-A-T Score: ${eeatScore.overall}%`);
 
-      // Visual break validation
       const vbResult = validateVisualBreaks(enhancedContent, MAX_CONSECUTIVE_P_WORDS);
       if (vbResult.valid) {
         this.log('Visual Breaks: ✅ PASSED — no wall-of-text violations');
@@ -2309,7 +2038,6 @@ Output ONLY the HTML. No markdown. No commentary.`;
         this.warn(`Visual Breaks: ⚠️ ${vbResult.violations.length} violation(s) remain after post-processing`);
       }
 
-      // E-E-A-T improvement suggestions
       if (options.validateEEAT !== false && eeatScore.overall < 70) {
         const enhancements = this.eeatValidator.generateEEATEnhancements(eeatScore);
         this.log(`E-E-A-T improvements needed: ${enhancements.slice(0, 3).join(', ')}`);
@@ -2348,7 +2076,6 @@ Output ONLY the HTML. No markdown. No commentary.`;
       this.warn(`SEO metadata generation failed (non-fatal): ${e}`);
     }
 
-    // Final word-count sanity check
     const finalWordCount = this.countWordsFromHtml(enhancedContent);
     if (finalWordCount < targetWordCount * 0.9) {
       this.warn(
@@ -2357,7 +2084,6 @@ Output ONLY the HTML. No markdown. No commentary.`;
       );
     }
 
-    // Build schema (non-fatal)
     let schema: GeneratedContent['schema'] = { '@context': 'https://schema.org', '@graph': [] };
     try {
       schema = this.schemaGenerator.generateComprehensiveSchema(
@@ -2408,7 +2134,6 @@ Output ONLY the HTML. No markdown. No commentary.`;
       // NeuronWriter data
       neuronWriterQueryId: neuron?.queryId,
       neuronWriterAnalysis: neuron ? Object.assign({}, neuron.analysis, { query_id: neuron.queryId, status: 'ready' }) : undefined,
-
 
       // Post-processing audit trail
       postProcessing: postProcessingResult,

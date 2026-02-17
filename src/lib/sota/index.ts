@@ -4,9 +4,9 @@
 // ─── Core Types ──────────────────────────────────────────────────────────────
 export type {
   GeneratedContent,
-  ContentGenerationOptions,
   QualityScore,
   ContentMetrics,
+  AnalyticsDashboardData,
 } from "./types";
 
 // ─── NeuronWriter Service (class + factory + scoring + types) ────────────────
@@ -48,8 +48,8 @@ export function buildNeuronWriterPromptSection(
 }
 
 // ─── Internal Link Engine ────────────────────────────────────────────────────
-export { generateInternalLinks, applyInternalLinks } from "./SOTAInternalLinkEngine";
-export type { InternalLink, SitemapUrl } from "./SOTAInternalLinkEngine";
+export { SOTAInternalLinkEngine, createInternalLinkEngine } from "./SOTAInternalLinkEngine";
+export type { InternalLink } from "./types";
 
 // ─── Content Prompt Builder ──────────────────────────────────────────────────
 export { buildMasterSystemPrompt, buildMasterUserPrompt } from "./prompts/masterContentPrompt";
@@ -71,11 +71,16 @@ export { SchemaGenerator } from "./SchemaGenerator";
 export { EEATValidator } from "./EEATValidator";
 
 // ─── Quality Validator ───────────────────────────────────────────────────────
-export { QualityValidator } from "./QualityValidator";
+export {
+  calculateQualityScore,
+  analyzeContent,
+  removeAIPhrases,
+  polishReadability,
+  validateVisualBreaks,
+} from "./QualityValidator";
 
 // ─── Performance Tracker ─────────────────────────────────────────────────────
-export { PerformanceTracker, globalPerformanceTracker } from "./PerformanceTracker";
-export type { AnalyticsDashboardData } from "./PerformanceTracker";
+export { globalPerformanceTracker } from "./PerformanceTracker";
 
 // ─── Reference Service ───────────────────────────────────────────────────────
 export { ReferenceService } from "./ReferenceService";
@@ -93,7 +98,7 @@ export { SEOHealthScorer } from "./SEOHealthScorer";
 export { GodModeEngine } from "./GodModeEngine";
 
 // ─── Cache ───────────────────────────────────────────────────────────────────
-export { SOTACache } from "./cache";
+export { generationCache } from "./cache";
 
 // ─── Sanitize (export both old and new names for compatibility) ──────────────
 export {

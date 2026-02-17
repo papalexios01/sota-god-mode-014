@@ -83,10 +83,10 @@ const MIN_IMPROVED_LENGTH_RATIO = 0.97;
 const MAX_CONSECUTIVE_P_WORDS = 200;
 
 /** Minimum internal links to inject if below threshold */
-const MIN_INTERNAL_LINKS = 4;
+const MIN_INTERNAL_LINKS = 6;
 
 /** Target internal links for optimal SEO */
-const TARGET_INTERNAL_LINKS = 8;
+const TARGET_INTERNAL_LINKS = 12;
 
 /** Minimum words for content to be considered valid */
 const MIN_VALID_CONTENT_LENGTH = 100;
@@ -980,7 +980,7 @@ Return the COMPLETE improved article with ALL missing terms naturally incorporat
     content: string,
     keyword: string,
     currentScore: number,
-    allTerms: Array<{ term: string; [key: string]: unknown }>
+    allTerms: Array<{ term: string }>
   ): Promise<string> {
     const allTermsText = allTerms.map(t => t.term).join(', ');
 
@@ -1302,28 +1302,46 @@ Output ONLY the HTML paragraphs, nothing else.`;
    */
   private injectInternalLinks(content: string, options: GenerationOptions): string {
     if (options.injectLinks === false) return content;
-    if (!this.config.sitePages || this.config.sitePages.length === 0) return content;
+    if (!this.config.sitePages || this.config.sitePages.length === 0) {
+      this.log('Internal links: No sitePages configured — skipping');
+      return content;
+    }
 
     try {
       this.linkEngine.updateSitePages(this.config.sitePages);
 
-      const existingCount = this.countExistingLinks(content);
-      this.log(`Internal links already in content: ${existingCount}`);
+      // Count only INTERNAL links (matching our site's domain), not external refs
+      const siteDomains = new Set<string>();
+      for (const page of this.config.sitePages) {
+        try { siteDomains.add(new URL(page.url).hostname.toLowerCase()); } catch { /* skip */ }
+      }
 
-      if (existingCount >= MIN_INTERNAL_LINKS) {
-        this.log(`Content already has ${existingCount} internal links — skipping post-generation injection`);
+      const allHrefs = content.match(/href\s*=\s*["']([^"']+)["']/gi) || [];
+      let internalCount = 0;
+      for (const hrefMatch of allHrefs) {
+        const url = hrefMatch.replace(/href\s*=\s*["']/i, '').replace(/["']$/, '');
+        try {
+          const hostname = new URL(url).hostname.toLowerCase();
+          if (siteDomains.has(hostname)) internalCount++;
+        } catch { /* skip relative or malformed */ }
+      }
+
+      this.log(`Internal links in content: ${internalCount} (from ${this.config.sitePages.length} sitePages)`);
+
+      if (internalCount >= TARGET_INTERNAL_LINKS) {
+        this.log(`Content already has ${internalCount} internal links ≥ target ${TARGET_INTERNAL_LINKS} — skipping`);
         return content;
       }
 
-      const needed = Math.max(MIN_INTERNAL_LINKS, TARGET_INTERNAL_LINKS - existingCount);
-      this.log(`Need ${needed} more internal links (minimum ${MIN_INTERNAL_LINKS} total). Finding opportunities...`);
+      const needed = Math.max(MIN_INTERNAL_LINKS - internalCount, TARGET_INTERNAL_LINKS - internalCount);
+      this.log(`Need ${needed} more internal links (target: ${TARGET_INTERNAL_LINKS}, have: ${internalCount}). Finding opportunities...`);
 
-      const linkOpportunities = this.linkEngine.generateLinkOpportunities(content, needed);
+      const linkOpportunities = this.linkEngine.generateLinkOpportunities(content, needed, options.keyword);
 
       if (linkOpportunities.length > 0) {
         const enhanced = this.linkEngine.injectContextualLinks(content, linkOpportunities);
         this.telemetry.internalLinksInjected = linkOpportunities.length;
-        this.log(`Injected ${linkOpportunities.length} internal links (total: ~${existingCount + linkOpportunities.length})`);
+        this.log(`Injected ${linkOpportunities.length} internal links (total: ~${internalCount + linkOpportunities.length})`);
         return enhanced;
       } else {
         this.warn('No suitable link opportunities found for available pages');
@@ -1611,7 +1629,7 @@ Output ONLY the meta description, nothing else.`;
    */
   private buildSystemPrompt(): string {
     const availableInternalUrls = (this.config.sitePages || [])
-      .slice(0, 25)
+      .slice(0, 40)
       .map(p => `- ${p.url} — "${p.title}"`)
       .join('\n');
 
@@ -2079,9 +2097,9 @@ Write the complete article now. Output ONLY HTML.`;
       this.log(`3j: References — ${references.length} sources ensured in content`);
     } catch (e) {
       this.warn(`3j: ensureReferencesSection failed (non-fatal): ${e}`);
-  }
+    }
 
-        // --- 3k: Ensure FAQ section exists ---
+    // --- 3k: Ensure FAQ section exists ---
     try {
       const hasFaq = /<(details|h2)[^>]*>[\s\S]*?(?:faq|frequently asked|common questions)/i.test(enhancedContent);
       if (!hasFaq) {
@@ -2300,7 +2318,7 @@ Output ONLY the HTML. No markdown. No commentary.`;
 
       // NeuronWriter data
       neuronWriterQueryId: neuron?.queryId,
-            neuronWriterAnalysis: neuron ? Object.assign({}, neuron.analysis, { query_id: neuron.queryId, status: 'ready' }) : undefined,
+      neuronWriterAnalysis: neuron ? Object.assign({}, neuron.analysis, { query_id: neuron.queryId, status: 'ready' }) : undefined,
 
 
       // Post-processing audit trail

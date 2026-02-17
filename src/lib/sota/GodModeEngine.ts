@@ -707,6 +707,30 @@ export class GodModeEngine {
   private initializeOrchestrator(): void {
     const appConfig = this.options.getAppConfig();
 
+    // Convert sitemapUrls to sitePages format for internal linking
+    const sitePages = this.options.sitemapUrls.map(url => {
+      let title = '';
+      try {
+        const pathname = new URL(url).pathname;
+        const slug = pathname.replace(/^\/|\/$/g, '').split('/').pop() || '';
+        title = slug
+          .replace(/[-_]/g, ' ')
+          .replace(/\b\w/g, c => c.toUpperCase())
+          .trim();
+      } catch {
+        title = url;
+      }
+      return { url, title };
+    });
+
+    // Only pass NeuronWriter keys when explicitly enabled
+    const useNeuronWriter = appConfig.enableNeuronWriter &&
+      !!(appConfig.neuronWriterApiKey?.trim()) &&
+      !!(appConfig.neuronWriterProjectId?.trim());
+
+    this.log('info', `Orchestrator init`,
+      `${sitePages.length} sitePages for linking, NeuronWriter: ${useNeuronWriter ? 'ON' : 'OFF'}`);
+
     this.orchestrator = new EnterpriseContentOrchestrator({
       apiKeys: {
         geminiApiKey: appConfig.geminiApiKey || '',
@@ -722,8 +746,9 @@ export class GodModeEngine {
       organizationUrl: appConfig.wpUrl || '',
       authorName: appConfig.authorName || '',
       primaryModel: appConfig.primaryModel as any,
-      neuronWriterApiKey: appConfig.neuronWriterApiKey,
-      neuronWriterProjectId: appConfig.neuronWriterProjectId,
+      sitePages,
+      neuronWriterApiKey: useNeuronWriter ? appConfig.neuronWriterApiKey : undefined,
+      neuronWriterProjectId: useNeuronWriter ? appConfig.neuronWriterProjectId : undefined,
     });
   }
 

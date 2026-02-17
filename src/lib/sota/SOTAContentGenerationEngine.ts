@@ -1,15 +1,15 @@
-// SOTA CONTENT GENERATION ENGINE - Multi-Model AI Processing
+// SOTA CONTENT GENERATION ENGINE v2.1 - Multi-Model AI Processing
+// Fixed: Cache type mismatch, added retry logic, improved error handling
 
-import type { 
-  AIModel, 
-  APIKeys, 
-  GenerationParams, 
-  GenerationResult, 
-  ConsensusResult 
+import type {
+  AIModel,
+  APIKeys,
+  GenerationParams,
+  GenerationResult,
+  ConsensusResult,
 } from './types';
 import { generationCache } from './cache';
 
-// Model configurations with dynamic model ID support
 interface ModelConfig {
   endpoint: string;
   modelId: string;
@@ -22,39 +22,42 @@ const DEFAULT_MODEL_CONFIGS: Record<AIModel, ModelConfig> = {
     endpoint: 'https://generativelanguage.googleapis.com/v1beta/models',
     modelId: 'gemini-2.5-flash',
     weight: 1.0,
-    maxTokens: 8192
+    maxTokens: 8192,
   },
   openai: {
     endpoint: 'https://api.openai.com/v1/chat/completions',
     modelId: 'gpt-4o',
     weight: 1.0,
-    maxTokens: 16384
+    maxTokens: 16384,
   },
   anthropic: {
     endpoint: 'https://api.anthropic.com/v1/messages',
     modelId: 'claude-sonnet-4-20250514',
     weight: 1.0,
-    maxTokens: 8192
+    maxTokens: 8192,
   },
   openrouter: {
     endpoint: 'https://openrouter.ai/api/v1/chat/completions',
     modelId: 'anthropic/claude-3.5-sonnet',
     weight: 0.9,
-    maxTokens: 8192
+    maxTokens: 8192,
   },
   groq: {
     endpoint: 'https://api.groq.com/openai/v1/chat/completions',
     modelId: 'llama-3.3-70b-versatile',
     weight: 0.8,
-    maxTokens: 8192
-  }
+    maxTokens: 8192,
+  },
 };
 
-// Extended API Keys interface with custom model IDs
 export interface ExtendedAPIKeys extends APIKeys {
   openrouterModelId?: string;
   groqModelId?: string;
 }
+
+/** Maximum retries for transient API errors (429, 500, 503) */
+const MAX_RETRIES = 2;
+const RETRYABLE_STATUS_CODES = [429, 500, 502, 503, 504];
 
 export class SOTAContentGenerationEngine {
   private apiKeys: ExtendedAPIKeys;
@@ -64,24 +67,21 @@ export class SOTAContentGenerationEngine {
   constructor(apiKeys: ExtendedAPIKeys, onProgress?: (message: string) => void) {
     this.apiKeys = apiKeys;
     this.onProgress = onProgress;
-    
-    // Build model configs with custom model IDs
+
     this.modelConfigs = { ...DEFAULT_MODEL_CONFIGS };
-    
-    // Override OpenRouter model if provided
+
     if (apiKeys.openrouterModelId) {
       this.modelConfigs.openrouter = {
         ...this.modelConfigs.openrouter,
-        modelId: apiKeys.openrouterModelId
+        modelId: apiKeys.openrouterModelId,
       };
       this.log(`OpenRouter using custom model: ${apiKeys.openrouterModelId}`);
     }
-    
-    // Override Groq model if provided
+
     if (apiKeys.groqModelId) {
       this.modelConfigs.groq = {
         ...this.modelConfigs.groq,
-        modelId: apiKeys.groqModelId
+        modelId: apiKeys.groqModelId,
       };
       this.log(`Groq using custom model: ${apiKeys.groqModelId}`);
     }
@@ -98,78 +98,108 @@ export class SOTAContentGenerationEngine {
       openai: 'openaiApiKey',
       anthropic: 'anthropicApiKey',
       openrouter: 'openrouterApiKey',
-      groq: 'groqApiKey'
+      groq: 'groqApiKey',
     };
     return this.apiKeys[keyMap[model]];
   }
 
+  private async sleep(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  /**
+   * Determine if an error is retryable (rate limit or transient server error).
+   */
+  private isRetryableError(error: unknown): boolean {
+    if (error instanceof Error) {
+      const msg = error.message;
+      return RETRYABLE_STATUS_CODES.some(code => msg.includes(String(code))) ||
+        msg.includes('ECONNRESET') ||
+        msg.includes('ETIMEDOUT') ||
+        msg.includes('fetch failed');
+    }
+    return false;
+  }
+
   async generateWithModel(params: GenerationParams): Promise<GenerationResult> {
     const { prompt, model, systemPrompt, temperature = 0.7, maxTokens } = params;
-    const startTime = Date.now();
     const apiKey = this.getApiKey(model);
 
     if (!apiKey) {
       throw new Error(`No API key configured for ${model}`);
     }
 
-    // Check cache first
-    const cacheKey = { prompt, model, systemPrompt };
+    // Check cache — FIX: cache now stores GenerationResult directly, not Promise
+    const cacheKey = { prompt: prompt.slice(0, 200), model, systemPrompt: (systemPrompt || '').slice(0, 100) };
     const cached = generationCache.get<GenerationResult>(cacheKey);
     if (cached) {
       generationCache.recordHit();
       this.log(`Cache hit for ${model}`);
-      return cached;
+      return { ...cached, cached: true };
     }
     generationCache.recordMiss();
 
     const config = this.modelConfigs[model];
     const finalMaxTokens = maxTokens || config.maxTokens;
 
-    let content = '';
-    let tokensUsed = 0;
-
-    try {
-      if (model === 'gemini') {
-        content = await this.callGemini(apiKey, prompt, systemPrompt, temperature, finalMaxTokens);
-      } else if (model === 'openai') {
-        const result = await this.callOpenAI(apiKey, prompt, systemPrompt, temperature, finalMaxTokens);
-        content = result.content;
-        tokensUsed = result.tokens;
-      } else if (model === 'anthropic') {
-        const result = await this.callAnthropic(apiKey, prompt, systemPrompt, temperature, finalMaxTokens);
-        content = result.content;
-        tokensUsed = result.tokens;
-      } else if (model === 'openrouter' || model === 'groq') {
-        const result = await this.callOpenAICompatible(
-          model === 'openrouter' ? config.endpoint : config.endpoint,
-          apiKey,
-          config.modelId,
-          prompt,
-          systemPrompt,
-          temperature,
-          finalMaxTokens
-        );
-        content = result.content;
-        tokensUsed = result.tokens;
+    // Retry loop for transient errors
+    let lastError: unknown;
+    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+      if (attempt > 0) {
+        const backoffMs = Math.min(1000 * Math.pow(2, attempt), 8000);
+        this.log(`Retrying ${model} (attempt ${attempt + 1}/${MAX_RETRIES + 1}) after ${backoffMs}ms...`);
+        await this.sleep(backoffMs);
       }
-    } catch (error) {
-      this.log(`Error with ${model}: ${error}`);
-      throw error;
+
+      const startTime = Date.now();
+
+      try {
+        let content = '';
+        let tokensUsed = 0;
+
+        if (model === 'gemini') {
+          content = await this.callGemini(apiKey, prompt, systemPrompt, temperature, finalMaxTokens);
+        } else if (model === 'openai') {
+          const r = await this.callOpenAI(apiKey, prompt, systemPrompt, temperature, finalMaxTokens);
+          content = r.content;
+          tokensUsed = r.tokens;
+        } else if (model === 'anthropic') {
+          const r = await this.callAnthropic(apiKey, prompt, systemPrompt, temperature, finalMaxTokens);
+          content = r.content;
+          tokensUsed = r.tokens;
+        } else if (model === 'openrouter' || model === 'groq') {
+          const r = await this.callOpenAICompatible(
+            config.endpoint, apiKey, config.modelId,
+            prompt, systemPrompt, temperature, finalMaxTokens,
+          );
+          content = r.content;
+          tokensUsed = r.tokens;
+        }
+
+        const result: GenerationResult = {
+          content,
+          model,
+          tokensUsed,
+          duration: Date.now() - startTime,
+          cached: false,
+        };
+
+        // FIX: Store the resolved result directly, not a Promise wrapper
+        generationCache.set(cacheKey, result);
+
+        return result;
+      } catch (error) {
+        lastError = error;
+        if (attempt < MAX_RETRIES && this.isRetryableError(error)) {
+          this.log(`${model} returned retryable error: ${error}`);
+          continue;
+        }
+        break;
+      }
     }
 
-    const result: GenerationResult = {
-      content,
-      model,
-      tokensUsed,
-      duration: Date.now() - startTime,
-      cached: false
-    };
-
-    // Cache the result
-    const resultPromise = Promise.resolve(result);
-    generationCache.set(cacheKey, resultPromise);
-
-    return result;
+    this.log(`Error with ${model} after ${MAX_RETRIES + 1} attempts: ${lastError}`);
+    throw lastError;
   }
 
   private async callGemini(
@@ -177,7 +207,7 @@ export class SOTAContentGenerationEngine {
     prompt: string,
     systemPrompt?: string,
     temperature: number = 0.7,
-    maxTokens: number = 8192
+    maxTokens: number = 8192,
   ): Promise<string> {
     const url = `${this.modelConfigs.gemini.endpoint}/${this.modelConfigs.gemini.modelId}:generateContent?key=${apiKey}`;
 
@@ -185,10 +215,7 @@ export class SOTAContentGenerationEngine {
 
     const requestBody: Record<string, unknown> = {
       contents,
-      generationConfig: {
-        temperature,
-        maxOutputTokens: maxTokens
-      }
+      generationConfig: { temperature, maxOutputTokens: maxTokens },
     };
 
     if (systemPrompt) {
@@ -198,7 +225,7 @@ export class SOTAContentGenerationEngine {
     const response = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(requestBody)
+      body: JSON.stringify(requestBody),
     });
 
     if (!response.ok) {
@@ -215,36 +242,35 @@ export class SOTAContentGenerationEngine {
     prompt: string,
     systemPrompt?: string,
     temperature: number = 0.7,
-    maxTokens: number = 4096
+    maxTokens: number = 4096,
   ): Promise<{ content: string; tokens: number }> {
     const messages = [];
-    if (systemPrompt) {
-      messages.push({ role: 'system', content: systemPrompt });
-    }
+    if (systemPrompt) messages.push({ role: 'system', content: systemPrompt });
     messages.push({ role: 'user', content: prompt });
 
     const response = await fetch(this.modelConfigs.openai.endpoint, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`
+        'Authorization': `Bearer ${apiKey}`,
       },
       body: JSON.stringify({
         model: this.modelConfigs.openai.modelId,
         messages,
         temperature,
-        max_tokens: maxTokens
-      })
+        max_tokens: maxTokens,
+      }),
     });
 
     if (!response.ok) {
-      throw new Error(`OpenAI API error: ${response.status}`);
+      const errorBody = await response.text().catch(() => '');
+      throw new Error(`OpenAI API error ${response.status}: ${errorBody.slice(0, 200)}`);
     }
 
     const data = await response.json();
     return {
       content: data.choices?.[0]?.message?.content || '',
-      tokens: data.usage?.total_tokens || 0
+      tokens: data.usage?.total_tokens || 0,
     };
   }
 
@@ -253,7 +279,7 @@ export class SOTAContentGenerationEngine {
     prompt: string,
     systemPrompt?: string,
     temperature: number = 0.7,
-    maxTokens: number = 4096
+    maxTokens: number = 4096,
   ): Promise<{ content: string; tokens: number }> {
     const response = await fetch(this.modelConfigs.anthropic.endpoint, {
       method: 'POST',
@@ -261,15 +287,15 @@ export class SOTAContentGenerationEngine {
         'Content-Type': 'application/json',
         'x-api-key': apiKey,
         'anthropic-version': '2023-06-01',
-        'anthropic-dangerous-direct-browser-access': 'true'
+        'anthropic-dangerous-direct-browser-access': 'true',
       },
       body: JSON.stringify({
         model: this.modelConfigs.anthropic.modelId,
         max_tokens: maxTokens,
         system: systemPrompt,
         messages: [{ role: 'user', content: prompt }],
-        temperature
-      })
+        temperature,
+      }),
     });
 
     if (!response.ok) {
@@ -280,7 +306,7 @@ export class SOTAContentGenerationEngine {
     const data = await response.json();
     return {
       content: data.content?.[0]?.text || '',
-      tokens: (data.usage?.input_tokens || 0) + (data.usage?.output_tokens || 0)
+      tokens: (data.usage?.input_tokens || 0) + (data.usage?.output_tokens || 0),
     };
   }
 
@@ -291,90 +317,72 @@ export class SOTAContentGenerationEngine {
     prompt: string,
     systemPrompt?: string,
     temperature: number = 0.7,
-    maxTokens: number = 4096
+    maxTokens: number = 4096,
   ): Promise<{ content: string; tokens: number }> {
     const messages = [];
-    if (systemPrompt) {
-      messages.push({ role: 'system', content: systemPrompt });
-    }
+    if (systemPrompt) messages.push({ role: 'system', content: systemPrompt });
     messages.push({ role: 'user', content: prompt });
 
     const response = await fetch(endpoint, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`
+        'Authorization': `Bearer ${apiKey}`,
       },
-      body: JSON.stringify({
-        model: modelId,
-        messages,
-        temperature,
-        max_tokens: maxTokens
-      })
+      body: JSON.stringify({ model: modelId, messages, temperature, max_tokens: maxTokens }),
     });
 
     if (!response.ok) {
-      throw new Error(`API error: ${response.status}`);
+      const errorBody = await response.text().catch(() => '');
+      throw new Error(`${modelId} API error ${response.status}: ${errorBody.slice(0, 200)}`);
     }
 
     const data = await response.json();
     return {
       content: data.choices?.[0]?.message?.content || '',
-      tokens: data.usage?.total_tokens || 0
+      tokens: data.usage?.total_tokens || 0,
     };
   }
 
   async generateWithConsensus(
     prompt: string,
     systemPrompt?: string,
-    models?: AIModel[]
+    models?: AIModel[],
   ): Promise<ConsensusResult> {
-    // Get available models
     const availableModels = models || this.getAvailableModels();
-    
+
     if (availableModels.length === 0) {
       throw new Error('No AI models available');
     }
 
     if (availableModels.length === 1) {
-      // Single model, no consensus needed
       const result = await this.generateWithModel({
         prompt,
         model: availableModels[0],
         apiKeys: this.apiKeys,
-        systemPrompt
+        systemPrompt,
       });
-      
       return {
         finalContent: result.content,
         models: [availableModels[0]],
         scores: { [availableModels[0]]: 1.0 } as Record<AIModel, number>,
         synthesized: false,
-        confidence: 0.8
+        confidence: 0.8,
       };
     }
 
     this.log(`Running consensus generation with ${availableModels.length} models...`);
 
-    // Generate content from all available models in parallel
     const results = await Promise.allSettled(
       availableModels.map(model =>
-        this.generateWithModel({
-          prompt,
-          model,
-          apiKeys: this.apiKeys,
-          systemPrompt
-        })
-      )
+        this.generateWithModel({ prompt, model, apiKeys: this.apiKeys, systemPrompt }),
+      ),
     );
 
     const successfulResults: Array<{ model: AIModel; content: string }> = [];
     results.forEach((result, index) => {
       if (result.status === 'fulfilled') {
-        successfulResults.push({
-          model: availableModels[index],
-          content: result.value.content
-        });
+        successfulResults.push({ model: availableModels[index], content: result.value.content });
       }
     });
 
@@ -388,55 +396,47 @@ export class SOTAContentGenerationEngine {
         models: [successfulResults[0].model],
         scores: { [successfulResults[0].model]: 1.0 } as Record<AIModel, number>,
         synthesized: false,
-        confidence: 0.7
+        confidence: 0.7,
       };
     }
 
-    // Synthesize best parts from multiple outputs
     const synthesized = await this.synthesizeConsensus(successfulResults, systemPrompt);
-    
     const scores: Record<AIModel, number> = {} as Record<AIModel, number>;
-    successfulResults.forEach(r => {
-      scores[r.model] = this.modelConfigs[r.model].weight;
-    });
+    successfulResults.forEach(r => { scores[r.model] = this.modelConfigs[r.model].weight; });
 
     return {
       finalContent: synthesized,
       models: successfulResults.map(r => r.model),
       scores,
       synthesized: true,
-      confidence: 0.95
+      confidence: 0.95,
     };
   }
 
   private async synthesizeConsensus(
     results: Array<{ model: AIModel; content: string }>,
-    originalSystemPrompt?: string
+    originalSystemPrompt?: string,
   ): Promise<string> {
-    // Use the primary available model to synthesize
     const primaryModel = this.getAvailableModels()[0];
-    
-    const synthesisPrompt = `You are an expert content editor. Below are ${results.length} different versions of the same content generated by different AI models. Your task is to synthesize the BEST version by:
+
+    const synthesisPrompt = `You are an expert content editor. Below are ${results.length} different versions of the same content. Synthesize the BEST version by:
 
 1. Taking the strongest points from each version
 2. Ensuring factual consistency
 3. Maintaining the best writing style and flow
-4. Removing any redundancy or filler content
-5. Ensuring proper structure with headings, paragraphs, and formatting
+4. Removing redundancy or filler
+5. Ensuring proper HTML structure
 
-${results.map((r, i) => `
-=== VERSION ${i + 1} (${r.model.toUpperCase()}) ===
-${r.content}
-`).join('\n')}
+${results.map((r, i) => `\n=== VERSION ${i + 1} (${r.model.toUpperCase()}) ===\n${r.content}\n`).join('\n')}
 
-Now synthesize these into ONE perfect, cohesive piece of content. Output ONLY the final synthesized content, no explanations.`;
+Synthesize into ONE perfect piece. Output ONLY the final content, no explanations.`;
 
     const result = await this.generateWithModel({
       prompt: synthesisPrompt,
       model: primaryModel,
       apiKeys: this.apiKeys,
       systemPrompt: originalSystemPrompt,
-      temperature: 0.3 // Lower temperature for more consistent synthesis
+      temperature: 0.3,
     });
 
     return result.content;
@@ -452,7 +452,9 @@ Now synthesize these into ONE perfect, cohesive piece of content. Output ONLY th
   }
 }
 
-// Factory function
-export function createSOTAEngine(apiKeys: APIKeys, onProgress?: (message: string) => void): SOTAContentGenerationEngine {
+export function createSOTAEngine(
+  apiKeys: APIKeys,
+  onProgress?: (message: string) => void,
+): SOTAContentGenerationEngine {
   return new SOTAContentGenerationEngine(apiKeys, onProgress);
 }

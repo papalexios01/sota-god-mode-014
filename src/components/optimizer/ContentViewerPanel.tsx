@@ -142,19 +142,65 @@ export function ContentViewerPanel({
   }, [neuronData, generatedContent]);
 
   // NeuronWriter live scoring
+    // ✅ FIX: Map scoreContentAgainstNeuron output to the shape the UI expects.
+  // The scorer returns { missingBasicTerms, missingEntities, matchedTerms, totalTerms }
+  // but NeuronWriterTab expects { missing, underused, optimal }.
   const neuronLiveScore = useMemo(() => {
     if (!effectiveNeuronData) return null;
-    return scoreContentAgainstNeuron(content, effectiveNeuronData);
-  }, [content, effectiveNeuronData]);
+    const raw = scoreContentAgainstNeuron(displayContent || content, effectiveNeuronData);
+    if (!raw) return null;
 
-  const handleCopy = async () => {
-    await navigator.clipboard.writeText(content);
+    // Build term lists that the UI can render
+    const allTerms = [
+      ...(effectiveNeuronData.basicKeywords || effectiveNeuronData.terms || []),
+      ...(effectiveNeuronData.extendedKeywords || effectiveNeuronData.termsExtended || []),
+    ];
+
+    const contentLower = (displayContent || content).replace(/<[^>]*>/g, ' ').toLowerCase();
+
+    const missing: string[] = [];
+    const underused: string[] = [];
+    const optimal: string[] = [];
+
+    for (const t of allTerms) {
+      const term = (t.term || t.name || '').toLowerCase().trim();
+      if (!term) continue;
+      const regex = new RegExp(term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
+      const count = (contentLower.match(regex) || []).length;
+      const recommended = t.recommended || t.frequency || 1;
+
+      if (count === 0) missing.push(t.term || t.name || '');
+      else if (count < recommended) underused.push(t.term || t.name || '');
+      else optimal.push(t.term || t.name || '');
+    }
+
+    // Add entity coverage to missing list
+    for (const e of (effectiveNeuronData.entities || [])) {
+      const entity = (e.entity || '').toLowerCase().trim();
+      if (entity && !contentLower.includes(entity)) {
+        missing.push(e.entity);
+      }
+    }
+
+    return {
+      ...raw,
+      missing,
+      underused,
+      optimal,
+    };
+  }, [displayContent, content, effectiveNeuronData]);
+
+
+    const handleCopy = async () => {
+    await navigator.clipboard.writeText(editedContent || content);
+
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
 
   const handleDownload = () => {
-    const blob = new Blob([content], { type: 'text/html' });
+    const blob = new Blob([editedContent || content], { type: 'text/html' });
+
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
@@ -272,7 +318,13 @@ export function ContentViewerPanel({
 
   const handlePublishToWordPress = async () => {
     if (!item) return;
-    const publishContent = isEditorDirty ? editedContent : content;
+        // ✅ FIX: Always use editedContent — it's initialized from content on mount
+    // and always holds the latest version (edited or original).
+    // The old code used `isEditorDirty ? editedContent : content` which broke
+    // after clicking "Save" because Save sets isEditorDirty=false, causing
+    // the publish to send the ORIGINAL content instead of the saved edits.
+    const publishContent = editedContent || content;
+
     if (!publishContent) return;
 
     const cleanTitle = item.title.replace(/^\s*rewrite\s*:\s*/i, '').trim();
@@ -993,6 +1045,46 @@ function NeuronWriterTab({ neuronData, content, neuronLiveScore }: NeuronWriterT
       </div>
     );
   }
+
+  // ✅ FIX: Show helpful message when NW was configured but the query returned no data
+  const nwStatus = (neuronData as any)?.status;
+  const nwFailReason = (neuronData as any)?._failReason;
+  if (nwStatus === 'failed' || (!hasStructuredData && !legacyTerms.length && nwStatus !== 'ready')) {
+    return (
+      <div className="p-8 max-w-7xl mx-auto">
+        <div className="glass-card border border-yellow-500/20 rounded-3xl p-8 relative overflow-hidden shadow-xl">
+          <div className="absolute top-0 right-0 w-64 h-64 bg-yellow-500/5 rounded-full blur-3xl -z-10 -translate-y-1/2 translate-x-1/3" />
+          <div className="flex flex-col items-center justify-center py-8 text-center">
+            <div className="w-16 h-16 rounded-2xl bg-yellow-500/10 flex items-center justify-center mb-4 border border-yellow-500/20">
+              <AlertTriangle className="w-8 h-8 text-yellow-400" />
+            </div>
+            <h3 className="text-xl font-bold text-white mb-3">NeuronWriter: No Data Available</h3>
+            <p className="text-zinc-400 max-w-lg mb-4">
+              NeuronWriter is configured but returned no keyword/term data for this content.
+              This usually means the NeuronWriter query is broken or still processing.
+            </p>
+            {nwFailReason && (
+              <div className="px-4 py-3 bg-yellow-500/10 border border-yellow-500/20 rounded-xl text-yellow-400 text-sm font-medium max-w-lg mb-4">
+                {nwFailReason}
+              </div>
+            )}
+            {neuronData.keyword && (
+              <div className="text-sm text-zinc-500">
+                Keyword: <span className="text-purple-400 font-bold">"{neuronData.keyword}"</span>
+              </div>
+            )}
+            <div className="mt-6 text-xs text-zinc-600 max-w-md">
+              <strong className="text-zinc-400">To fix:</strong> Go to{' '}
+              <a href="https://app.neuronwriter.com" target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">
+                app.neuronwriter.com
+              </a>, find this query, delete it, then regenerate the content.
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
 
   return (
     <div className="p-8 max-w-7xl mx-auto space-y-8">

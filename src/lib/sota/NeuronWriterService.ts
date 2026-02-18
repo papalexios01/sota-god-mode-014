@@ -388,68 +388,112 @@ export class NeuronWriterService {
     }
   }
 
-  async findQueryByKeyword(
+ async findQueryByKeyword(
     projectId: string,
     keyword: string
-  ): Promise<{ success: boolean; query?: NeuronWriterQuery; error?: string }> {
+): Promise<{ success: boolean; query?: NeuronWriterQuery; error?: string }> {
     try {
-      const res = await this.callProxy('/list-queries', { project: projectId });
+        const res = await this.callProxy('/list-queries', { project: projectId });
 
-      if (!res.success) {
-        return { success: false, error: res.error };
-      }
-
-      // NeuronWriter API returns a flat array with "query" key instead of "id":
-      // [{"query": "a6d0fb...", "keyword": "...", "tags": ["Done"], ...}, ...]
-      const rawData = res.data as any;
-      let rawList: any[] = [];
-
-      if (Array.isArray(rawData)) {
-        rawList = rawData;
-      } else if (rawData?.queries && Array.isArray(rawData.queries)) {
-        rawList = rawData.queries;
-      } else if (rawData && typeof rawData === 'object') {
-        const possibleArrays = Object.values(rawData).filter(Array.isArray);
-        if (possibleArrays.length > 0) {
-          rawList = possibleArrays[0] as any[];
+        if (!res.success) {
+            return { success: false, error: res.error };
         }
-      }
 
-      // Map and find matching query
-      const normalizedKeyword = keyword.toLowerCase().trim();
-      for (const q of rawList) {
-        const qKeyword = (q.keyword || '').toLowerCase().trim();
-        if (qKeyword !== normalizedKeyword) continue;
+        const rawData = res.data as any;
+        let rawList: any[] = [];
 
-        // Check if query is ready — NeuronWriter uses "tags" array with "Done"
-        const tags = Array.isArray(q.tags) ? q.tags : [];
-        const isDone = tags.some((t: string) => t.toLowerCase() === 'done') || q.status === 'ready';
-        if (!isDone) continue;
+        if (Array.isArray(rawData)) {
+            rawList = rawData;
+        } else if (rawData?.queries && Array.isArray(rawData.queries)) {
+            rawList = rawData.queries;
+        } else if (rawData && typeof rawData === 'object') {
+            const possibleArrays = Object.values(rawData).filter(Array.isArray);
+            if (possibleArrays.length > 0) {
+                rawList = possibleArrays[0] as any[];
+            }
+        }
 
-        const mapped: NeuronWriterQuery = {
-          id: q.query || q.id || '',
-          keyword: q.keyword,
-          status: 'ready',
-          language: q.language,
-          engine: q.engine,
-          source: q.source,
-          tags,
-          created_at: q.created_at || q.created,
-          updated_at: q.updated_at || q.updated,
-        };
+        // ── NEW: Normalized matching ──────────────────────────────
+        const normalize = (s: string): string =>
+            s.toLowerCase()
+             .trim()
+             .replace(/[-_]+/g, ' ')          // hyphens/underscores → spaces
+             .replace(/\b\d{4}\b/g, '')        // strip standalone years (2024, 2025, 2026)
+             .replace(/\s+/g, ' ')             // collapse whitespace
+             .trim();
 
-        this.diagSuccess(`Found existing query for "${keyword}": ${mapped.id}`);
-        return { success: true, query: mapped };
-      }
+        const searchNorm = normalize(keyword);
 
-      this.diagInfo(`No ready query found for "${keyword}" among ${rawList.length} queries`);
-      return { success: true, query: undefined };
+        // Score all queries and pick the best match
+        let bestMatch: { raw: any; score: number } | null = null;
+
+        for (const q of rawList) {
+            const qKeyword = (q.keyword || '').trim();
+            if (!qKeyword) continue;
+
+            const qNorm = normalize(qKeyword);
+
+            // Check readiness — NeuronWriter uses "Done" tag OR a status field
+            const tags = Array.isArray(q.tags) ? q.tags : [];
+            const isDone = tags.some((t: string) =>
+                ['done', 'ready', 'completed'].includes(t.toLowerCase())
+            ) || q.status === 'ready';
+            if (!isDone) continue;
+
+            // Scoring: exact normalized > contains > partial word overlap
+            let score = 0;
+            if (qNorm === searchNorm) {
+                score = 100;  // perfect normalized match
+            } else if (qNorm.includes(searchNorm) || searchNorm.includes(qNorm)) {
+                score = 80;   // one contains the other
+            } else {
+                // Word-level overlap (Jaccard-like)
+                const qWords = new Set(qNorm.split(' ').filter(Boolean));
+                const sWords = new Set(searchNorm.split(' ').filter(Boolean));
+                const intersection = [...qWords].filter(w => sWords.has(w)).length;
+                const union = new Set([...qWords, ...sWords]).size;
+                const overlap = union > 0 ? intersection / union : 0;
+                if (overlap >= 0.6) {
+                    score = Math.round(overlap * 70); // 42-70 range
+                }
+            }
+
+            if (score > 0 && (!bestMatch || score > bestMatch.score)) {
+                bestMatch = { raw: q, score };
+            }
+        }
+
+        if (bestMatch) {
+            const q = bestMatch.raw;
+            const tags = Array.isArray(q.tags) ? q.tags : [];
+            const mapped: NeuronWriterQuery = {
+                id: q.query || q.id || '',
+                keyword: q.keyword,
+                status: 'ready',
+                language: q.language,
+                engine: q.engine,
+                source: q.source,
+                tags,
+                created_at: q.created_at || q.created,
+                updated_at: q.updated_at || q.updated,
+            };
+
+            this.diagSuccess(
+                `Found existing query for "${keyword}" → matched "${q.keyword}" ` +
+                `(score: ${bestMatch.score}, ID: ${mapped.id})`
+            );
+            return { success: true, query: mapped };
+        }
+
+        this.diagInfo(`No ready query found for "${keyword}" among ${rawList.length} queries`);
+        return { success: true, query: undefined };
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      this.diagError(`findQueryByKeyword failed: ${msg}`);
-      return { success: false, error: msg };
+        const msg = e instanceof Error ? e.message : String(e);
+        this.diagError(`findQueryByKeyword failed: ${msg}`);
+        return { success: false, error: msg };
     }
-  }
+}
+
 
   async createQuery(
     projectId: string,

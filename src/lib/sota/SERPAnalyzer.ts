@@ -1,4 +1,15 @@
-// SERP ANALYZER - Real-Time Search Results Analysis
+// src/lib/sota/SERPAnalyzer.ts
+// ═══════════════════════════════════════════════════════════════════════════════
+// SERP ANALYZER v2.2 — Real-Time Search Results Analysis
+//
+// v2.2 Fix:
+//   • FIXED: serpCache.set() now stores plain results, NOT Promise.resolve(results).
+//     The old code cached a Promise object. The cache's .set() method in the old
+//     cache.ts called .finally() on the value — when SOTAContentGenerationEngine
+//     passed a plain object to generationCache.set(), the old cache tried to call
+//     .finally() on it → "TypeError: r.finally is not a function" → crash.
+//
+// ═══════════════════════════════════════════════════════════════════════════════
 
 import type { SERPResult, SERPAnalysis } from './types';
 import { serpCache } from './cache';
@@ -50,8 +61,13 @@ export class SERPAnalyzer {
         domain: this.extractDomain(result.link as string || '')
       }));
 
-      // Cache results
-      serpCache.set(cacheKey, Promise.resolve(results), 30 * 60 * 1000); // 30 min TTL
+      // ✅ FIX: Cache the plain results array, NOT Promise.resolve(results).
+      //    Old code:  serpCache.set(cacheKey, Promise.resolve(results), 30 * 60 * 1000);
+      //    This cached a Promise object. The old cache.ts called .finally() on
+      //    values passed to .set(). When other code (SOTAContentGenerationEngine)
+      //    passed a plain object to generationCache.set(), the old cache tried
+      //    .finally() on it → TypeError → crash.
+      serpCache.set(cacheKey, results, 30 * 60 * 1000);
 
       return results;
     } catch (error) {
@@ -70,24 +86,15 @@ export class SERPAnalyzer {
 
   async analyze(keyword: string, country: string = 'us'): Promise<SERPAnalysis> {
     const serpData = await this.fetchSERP(keyword, country);
-    
+
     if (serpData.length === 0) {
       return this.getDefaultAnalysis(keyword);
     }
 
-    // Analyze content length from snippets (approximate)
     const avgWordCount = this.estimateAvgWordCount(serpData);
-    
-    // Extract common heading patterns
     const commonHeadings = this.extractCommonHeadings(serpData, keyword);
-    
-    // Identify content gaps
     const contentGaps = this.identifyContentGaps(serpData, keyword);
-    
-    // Classify user intent
     const userIntent = this.classifyIntent(serpData, keyword);
-    
-    // Extract semantic entities
     const semanticEntities = this.extractEntities(serpData);
 
     return {
@@ -112,7 +119,6 @@ export class SERPAnalyzer {
   }
 
   private extractCommonHeadings(serpData: SERPResult[], keyword: string): string[] {
-    const keywordWords = keyword.toLowerCase().split(' ');
     const headingPatterns = [
       `What is ${keyword}`,
       `How to ${keyword}`,
@@ -126,11 +132,10 @@ export class SERPAnalyzer {
       `${keyword} for Beginners`
     ];
 
-    // Filter based on what appears in snippets
     return headingPatterns.filter(heading => {
       const headingLower = heading.toLowerCase();
-      return serpData.some(r => 
-        r.title.toLowerCase().includes(headingLower) || 
+      return serpData.some(r =>
+        r.title.toLowerCase().includes(headingLower) ||
         r.snippet.toLowerCase().includes(headingLower)
       );
     }).slice(0, 6);
@@ -138,8 +143,7 @@ export class SERPAnalyzer {
 
   private identifyContentGaps(serpData: SERPResult[], keyword: string): string[] {
     const gaps: string[] = [];
-    
-    // Common topics that might be missing
+
     const potentialTopics = [
       'pricing', 'cost', 'alternatives', 'comparison',
       'pros and cons', 'features', 'benefits', 'drawbacks',
@@ -149,8 +153,8 @@ export class SERPAnalyzer {
     ];
 
     potentialTopics.forEach(topic => {
-      const found = serpData.some(r => 
-        r.snippet.toLowerCase().includes(topic) || 
+      const found = serpData.some(r =>
+        r.snippet.toLowerCase().includes(topic) ||
         r.title.toLowerCase().includes(topic)
       );
       if (!found) {
@@ -177,9 +181,8 @@ export class SERPAnalyzer {
 
   private extractEntities(serpData: SERPResult[]): string[] {
     const entities = new Set<string>();
-    
+
     serpData.forEach(result => {
-      // Extract capitalized words (potential entities)
       const text = `${result.title} ${result.snippet}`;
       const matches = text.match(/[A-Z][a-z]+(?:\s[A-Z][a-z]+)*/g) || [];
       matches.forEach(match => {
@@ -193,16 +196,14 @@ export class SERPAnalyzer {
   }
 
   private generateRecommendedHeadings(
-    keyword: string, 
+    keyword: string,
     intent: SERPAnalysis['userIntent'],
     gaps: string[]
   ): string[] {
     const headings: string[] = [];
-    
-    // Introduction
+
     headings.push(`What is ${keyword}?`);
-    
-    // Intent-based headings
+
     if (intent === 'informational') {
       headings.push(`How ${keyword} Works`);
       headings.push(`Key Benefits of ${keyword}`);
@@ -216,13 +217,11 @@ export class SERPAnalyzer {
       headings.push(`Pros and Cons of ${keyword}`);
       headings.push(`Top Alternatives to ${keyword}`);
     }
-    
-    // Add gap-based headings
+
     gaps.slice(0, 2).forEach(gap => {
       headings.push(gap.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' '));
     });
-    
-    // Common sections
+
     headings.push(`Frequently Asked Questions`);
     headings.push(`Conclusion`);
 

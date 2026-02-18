@@ -189,12 +189,85 @@ interface OptimizerStore {
   setNeuronWriterData: (itemId: string, data: NeuronWriterDataStore[string]) => void;
   removeNeuronWriterData: (itemId: string) => void;
 
-  // 🆕 NEW: Persisted Editor Auto-Save Store (Goal #2: robust editor save flow)
+  // Persisted Editor Auto-Save Store
   editedContentsStore: Record<string, string>;
   setEditedContent: (itemId: string, content: string) => void;
   removeEditedContent: (itemId: string) => void;
   clearEditedContents: () => void;
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ✅ FIX #5: Date rehydration helpers for persist middleware
+//
+// JSON.stringify converts Date objects to ISO strings ("2026-01-15T10:30:00.000Z").
+// On reload, JSON.parse leaves them as strings. Any code calling .getTime(),
+// .toLocaleString(), etc. would crash with "is not a function".
+// These helpers convert them back to Date objects during persist rehydration.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function rehydrateDateField(obj: any, key: string): void {
+  if (obj && key in obj && typeof obj[key] === 'string') {
+    const d = new Date(obj[key]);
+    if (!isNaN(d.getTime())) {
+      obj[key] = d;
+    }
+  }
+}
+
+/**
+ * Walk targeted paths in the rehydrated state and convert ISO date strings
+ * back to Date objects. Only touches fields that are typed as Date in their
+ * respective interfaces — NOT the `generatedAt: string` in GeneratedContentStore.
+ */
+function rehydrateAllDates(state: any): void {
+  // godModeState.stats
+  const stats = state?.godModeState?.stats;
+  if (stats) {
+    rehydrateDateField(stats, 'sessionStartedAt');
+    rehydrateDateField(stats, 'lastScanAt');
+    rehydrateDateField(stats, 'nextScanAt');
+  }
+
+  // godModeState.activityLog[].timestamp
+  if (Array.isArray(state?.godModeState?.activityLog)) {
+    for (const item of state.godModeState.activityLog) {
+      rehydrateDateField(item, 'timestamp');
+    }
+  }
+
+  // godModeState.history[].timestamp
+  if (Array.isArray(state?.godModeState?.history)) {
+    for (const item of state.godModeState.history) {
+      rehydrateDateField(item, 'timestamp');
+    }
+  }
+
+  // godModeState.queue[].addedAt
+  if (Array.isArray(state?.godModeState?.queue)) {
+    for (const item of state.godModeState.queue) {
+      rehydrateDateField(item, 'addedAt');
+    }
+  }
+
+  // priorityUrls[].addedAt
+  if (Array.isArray(state?.priorityUrls)) {
+    for (const item of state.priorityUrls) {
+      rehydrateDateField(item, 'addedAt');
+    }
+  }
+
+  // contentItems[].createdAt, .updatedAt
+  if (Array.isArray(state?.contentItems)) {
+    for (const item of state.contentItems) {
+      rehydrateDateField(item, 'createdAt');
+      rehydrateDateField(item, 'updatedAt');
+    }
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// STORE
+// ─────────────────────────────────────────────────────────────────────────────
 
 export const useOptimizerStore = create<OptimizerStore>()(
   persist(
@@ -364,32 +437,4 @@ export const useOptimizerStore = create<OptimizerStore>()(
       })),
       removeGeneratedContent: (itemId) => set((state) => {
         const { [itemId]: _, ...rest } = state.generatedContentsStore;
-        return { generatedContentsStore: rest };
-      }),
-
-      // Persisted NeuronWriter Data Store
-      neuronWriterDataStore: {},
-      setNeuronWriterData: (itemId, data) => set((state) => ({
-        neuronWriterDataStore: { ...state.neuronWriterDataStore, [itemId]: data }
-      })),
-      removeNeuronWriterData: (itemId) => set((state) => {
-        const { [itemId]: _, ...rest } = state.neuronWriterDataStore;
-        return { neuronWriterDataStore: rest };
-      }),
-
-      // 🆕 NEW: Persisted Editor Auto-Save Store
-      editedContentsStore: {},
-      setEditedContent: (itemId, content) => set((state) => ({
-        editedContentsStore: { ...state.editedContentsStore, [itemId]: content }
-      })),
-      removeEditedContent: (itemId) => set((state) => {
-        const { [itemId]: _, ...rest } = state.editedContentsStore;
-        return { editedContentsStore: rest };
-      }),
-      clearEditedContents: () => set({ editedContentsStore: {} }),
-    }),
-    {
-      name: 'wp-optimizer-storage',
-    }
-  )
-);
+        return { generatedContentsStore:

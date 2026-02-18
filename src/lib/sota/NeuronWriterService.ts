@@ -1,19 +1,21 @@
 // src/lib/sota/NeuronWriterService.ts
 // ═══════════════════════════════════════════════════════════════════════════════
-// NEURONWRITER SERVICE v5.1 — DEFINITIVE DEDUPLICATION FIX
+// NEURONWRITER SERVICE v6.0 — ENTERPRISE-GRADE DEDUPLICATION
 // ═══════════════════════════════════════════════════════════════════════════════
 //
-// v5.1 Changes (on top of v5.0):
-//   • NEW: removeSessionEntry() — allows orchestrator to clear a single keyword
-//     from the session dedup cache when it detects a permanently broken query,
-//     so createQuery() can create a genuine replacement instead of returning
-//     the same broken ID.
+// v6.0 Changes (on top of v5.1):
+//   • NEW: Levenshtein distance-based fuzzy keyword matching — catches typos,
+//     plural forms, and word reorderings that Jaccard overlap missed.
+//   • NEW: localStorage-backed persistent dedup cache — survives page reloads,
+//     preventing duplicates across browser sessions.
+//   • NEW: Dual-layer dedup in createQuery() — pre-flight scan of ALL cached
+//     entries using fuzzy matching before ANY API call.
+//   • IMPROVED: findQueryByKeyword threshold — uses Levenshtein-based scoring
+//     with 90%+ similarity threshold for more aggressive duplicate detection.
+//   • IMPROVED: Similarity scoring now considers word-order-independent matching.
 //
-// v5.0 ROOT CAUSE FIXED:
-//   The app was creating duplicate queries because:
-//   1. findQueryByKeyword SKIPPED "in_progress" queries
-//   2. No in-memory session guard prevented re-creation within the same session
-//   3. Status filter was too strict — only "ready" was accepted
+// v5.1: removeSessionEntry() — orchestrator can clear broken query cache entries.
+// v5.0: ROOT CAUSE — accepted ALL statuses, in-memory session guard.
 //
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -90,9 +92,60 @@ export interface NeuronWriterProject {
 
 const MAX_RETRIES = 2;
 const INITIAL_RETRY_DELAY_MS = 1000;
+const PERSISTENT_CACHE_KEY = 'sota-nw-dedup-cache-v6';
+const PERSISTENT_CACHE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 
 // ─────────────────────────────────────────────────────────────────────────────
-// SESSION-LEVEL DEDUP MAP
+// LEVENSHTEIN DISTANCE — for fuzzy keyword deduplication
+// ─────────────────────────────────────────────────────────────────────────────
+
+function levenshteinDistance(a: string, b: string): number {
+  const m = a.length;
+  const n = b.length;
+  if (m === 0) return n;
+  if (n === 0) return m;
+
+  // Use two rows instead of full matrix — O(min(m,n)) space
+  let prev = Array.from({ length: n + 1 }, (_, i) => i);
+  let curr = new Array(n + 1);
+
+  for (let i = 1; i <= m; i++) {
+    curr[0] = i;
+    for (let j = 1; j <= n; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      curr[j] = Math.min(
+        prev[j] + 1,      // deletion
+        curr[j - 1] + 1,  // insertion
+        prev[j - 1] + cost // substitution
+      );
+    }
+    [prev, curr] = [curr, prev];
+  }
+  return prev[n];
+}
+
+/**
+ * Calculate similarity ratio between two strings using Levenshtein distance.
+ * Returns a value between 0 (completely different) and 1 (identical).
+ */
+function levenshteinSimilarity(a: string, b: string): number {
+  if (a === b) return 1;
+  const maxLen = Math.max(a.length, b.length);
+  if (maxLen === 0) return 1;
+  return 1 - levenshteinDistance(a, b) / maxLen;
+}
+
+/**
+ * Word-order-independent similarity: sorts words alphabetically then compares.
+ * "best dog food" vs "dog food best" → 1.0 (identical when sorted)
+ */
+function wordOrderIndependentSimilarity(a: string, b: string): number {
+  const sortWords = (s: string) => s.split(' ').filter(Boolean).sort().join(' ');
+  return levenshteinSimilarity(sortWords(a), sortWords(b));
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SESSION-LEVEL DEDUP MAP + PERSISTENT CACHE
 // ─────────────────────────────────────────────────────────────────────────────
 
 interface SessionEntry {
@@ -102,7 +155,76 @@ interface SessionEntry {
   status: string;
 }
 
+interface PersistentCacheEntry {
+  queryId: string;
+  keyword: string;
+  normalizedKeyword: string;
+  createdAt: number; // epoch ms
+  status: string;
+}
+
 const SESSION_DEDUP_MAP = new Map<string, SessionEntry>();
+
+// ── Persistent Cache Helpers ─────────────────────────────────────────────────
+
+function loadPersistentCache(): PersistentCacheEntry[] {
+  try {
+    const raw = localStorage.getItem(PERSISTENT_CACHE_KEY);
+    if (!raw) return [];
+    const entries: PersistentCacheEntry[] = JSON.parse(raw);
+    const now = Date.now();
+    // Prune expired entries
+    return entries.filter(e => now - e.createdAt < PERSISTENT_CACHE_MAX_AGE_MS);
+  } catch {
+    return [];
+  }
+}
+
+function savePersistentCache(entries: PersistentCacheEntry[]): void {
+  try {
+    localStorage.setItem(PERSISTENT_CACHE_KEY, JSON.stringify(entries));
+  } catch {
+    // localStorage might be full or unavailable — non-fatal
+  }
+}
+
+function addToPersistentCache(entry: PersistentCacheEntry): void {
+  const cache = loadPersistentCache();
+  // Remove any existing entry for the same normalized keyword
+  const filtered = cache.filter(e => e.normalizedKeyword !== entry.normalizedKeyword);
+  filtered.push(entry);
+  savePersistentCache(filtered);
+}
+
+function findInPersistentCache(normalizedKeyword: string): PersistentCacheEntry | null {
+  const cache = loadPersistentCache();
+
+  // 1. Exact match
+  const exact = cache.find(e => e.normalizedKeyword === normalizedKeyword);
+  if (exact) return exact;
+
+  // 2. Fuzzy match — Levenshtein similarity >= 90%
+  let bestMatch: PersistentCacheEntry | null = null;
+  let bestSimilarity = 0;
+
+  for (const entry of cache) {
+    const directSim = levenshteinSimilarity(entry.normalizedKeyword, normalizedKeyword);
+    const wordSim = wordOrderIndependentSimilarity(entry.normalizedKeyword, normalizedKeyword);
+    const sim = Math.max(directSim, wordSim);
+
+    if (sim >= 0.90 && sim > bestSimilarity) {
+      bestMatch = entry;
+      bestSimilarity = sim;
+    }
+  }
+
+  return bestMatch;
+}
+
+function removeFromPersistentCache(normalizedKeyword: string): void {
+  const cache = loadPersistentCache();
+  savePersistentCache(cache.filter(e => e.normalizedKeyword !== normalizedKeyword));
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // MAIN CLASS
@@ -184,9 +306,9 @@ export class NeuronWriterService {
         label: 'Supabase edge function',
         headers: this.proxyConfig.supabaseAnonKey
           ? {
-              Authorization: 'Bearer ' + this.proxyConfig.supabaseAnonKey,
-              apikey: this.proxyConfig.supabaseAnonKey,
-            }
+            Authorization: 'Bearer ' + this.proxyConfig.supabaseAnonKey,
+            apikey: this.proxyConfig.supabaseAnonKey,
+          }
           : undefined,
       });
     }
@@ -335,6 +457,8 @@ export class NeuronWriterService {
   ): Promise<{ success: boolean; query?: NeuronWriterQuery; error?: string }> {
     try {
       const sessionKey = this.getSessionKey(keyword);
+
+      // ── Layer 1: In-memory session cache (fastest) ──────────────────────
       const sessionHit = SESSION_DEDUP_MAP.get(sessionKey);
       if (sessionHit) {
         this.diagSuccess(
@@ -351,6 +475,57 @@ export class NeuronWriterService {
         };
       }
 
+      // ── Layer 1b: Fuzzy session cache scan ──────────────────────────────
+      // Check ALL session entries for Levenshtein-similar keywords
+      const searchNorm = this.normalize(keyword);
+      for (const [cachedKey, cachedEntry] of SESSION_DEDUP_MAP.entries()) {
+        const directSim = levenshteinSimilarity(cachedKey, searchNorm);
+        const wordSim = wordOrderIndependentSimilarity(cachedKey, searchNorm);
+        const sim = Math.max(directSim, wordSim);
+
+        if (sim >= 0.88) {
+          this.diagSuccess(
+            'SESSION FUZZY HIT: "' + keyword + '" ≈ "' + cachedEntry.keyword +
+            '" (similarity=' + (sim * 100).toFixed(1) + '%) → queryId=' + cachedEntry.queryId
+          );
+          // Also cache under the new key for instant hits next time
+          SESSION_DEDUP_MAP.set(sessionKey, cachedEntry);
+          return {
+            success: true,
+            query: {
+              id: cachedEntry.queryId,
+              keyword: cachedEntry.keyword,
+              status: cachedEntry.status,
+            },
+          };
+        }
+      }
+
+      // ── Layer 2: Persistent localStorage cache ──────────────────────────
+      const persistentHit = findInPersistentCache(searchNorm);
+      if (persistentHit) {
+        this.diagSuccess(
+          'PERSISTENT CACHE HIT: keyword "' + keyword + '" ≈ "' + persistentHit.keyword +
+          '" → queryId=' + persistentHit.queryId + ' — skipping API call'
+        );
+        // Promote to session cache
+        SESSION_DEDUP_MAP.set(sessionKey, {
+          queryId: persistentHit.queryId,
+          keyword: persistentHit.keyword,
+          createdAt: new Date(persistentHit.createdAt),
+          status: persistentHit.status,
+        });
+        return {
+          success: true,
+          query: {
+            id: persistentHit.queryId,
+            keyword: persistentHit.keyword,
+            status: persistentHit.status,
+          },
+        };
+      }
+
+      // ── Layer 3: API call to list all queries ───────────────────────────
       const res = await this.callProxy('/list-queries', { project: projectId });
       if (!res.success) return { success: false, error: res.error };
 
@@ -363,13 +538,12 @@ export class NeuronWriterService {
         if (arrays.length > 0) rawList = arrays[0] as any[];
       }
 
-      const searchNorm = this.normalize(keyword);
       this.diagInfo(
         'Searching ' + rawList.length + ' queries for "' + keyword +
-        '" (normalized: "' + searchNorm + '") — ALL statuses accepted'
+        '" (normalized: "' + searchNorm + '") — ALL statuses accepted — using Levenshtein matching'
       );
 
-      let bestMatch: { raw: any; score: number } | null = null;
+      let bestMatch: { raw: any; score: number; similarity: number } | null = null;
 
       for (const q of rawList) {
         const qKeyword = (q.keyword || '').trim();
@@ -377,24 +551,30 @@ export class NeuronWriterService {
 
         const qNorm = this.normalize(qKeyword);
         let score = 0;
+        let sim = 0;
 
         if (qNorm === searchNorm) {
           score = 100;
-        } else if (qNorm.includes(searchNorm) || searchNorm.includes(qNorm)) {
-          score = 80;
+          sim = 1;
         } else {
-          const qWords = new Set(qNorm.split(' ').filter(Boolean));
-          const sWords = new Set(searchNorm.split(' ').filter(Boolean));
-          const intersection = [...qWords].filter((w) => sWords.has(w)).length;
-          const union = new Set([...qWords, ...sWords]).size;
-          const overlap = union > 0 ? intersection / union : 0;
-          if (overlap >= 0.5) {
-            score = Math.round(overlap * 70);
+          // Levenshtein-based similarity (both direct and word-order-independent)
+          const directSim = levenshteinSimilarity(qNorm, searchNorm);
+          const wordSim = wordOrderIndependentSimilarity(qNorm, searchNorm);
+          sim = Math.max(directSim, wordSim);
+
+          // Substring containment bonus
+          if (qNorm.includes(searchNorm) || searchNorm.includes(qNorm)) {
+            sim = Math.max(sim, 0.85);
+          }
+
+          // Convert similarity to score — anything above 85% similarity is a match
+          if (sim >= 0.85) {
+            score = Math.round(sim * 100);
           }
         }
 
         if (score > 0 && (!bestMatch || score > bestMatch.score)) {
-          bestMatch = { raw: q, score };
+          bestMatch = { raw: q, score, similarity: sim };
         }
       }
 
@@ -405,13 +585,23 @@ export class NeuronWriterService {
 
         this.diagSuccess(
           'FOUND existing query "' + q.keyword + '" ID=' + queryId +
-          ' status=' + status + ' (match score=' + bestMatch.score + ')'
+          ' status=' + status + ' (match score=' + bestMatch.score +
+          ', Levenshtein similarity=' + (bestMatch.similarity * 100).toFixed(1) + '%)'
         );
 
+        // Cache in both session and persistent layers
         SESSION_DEDUP_MAP.set(sessionKey, {
           queryId,
           keyword: q.keyword,
           createdAt: new Date(),
+          status,
+        });
+
+        addToPersistentCache({
+          queryId,
+          keyword: q.keyword,
+          normalizedKeyword: searchNorm,
+          createdAt: Date.now(),
           status,
         });
 
@@ -450,16 +640,53 @@ export class NeuronWriterService {
       const cleanKw = NeuronWriterService.cleanKeyword(keyword);
       const sessionKey = this.getSessionKey(keyword);
 
+      // ── Guard 1: Exact session cache hit ────────────────────────────────
       const sessionHit = SESSION_DEDUP_MAP.get(sessionKey);
       if (sessionHit) {
         this.diagWarn(
-          'createQuery BLOCKED by session cache: "' + cleanKw +
+          'createQuery BLOCKED by session cache (exact): "' + cleanKw +
           '" → returning existing queryId=' + sessionHit.queryId
         );
         return { success: true, queryId: sessionHit.queryId };
       }
 
-      this.diagInfo('Creating NEW query for "' + cleanKw + '" (original: "' + keyword + '")');
+      // ── Guard 2: Fuzzy session cache scan ───────────────────────────────
+      // Pre-flight check: scan ALL cached entries for similar keywords
+      for (const [cachedKey, cachedEntry] of SESSION_DEDUP_MAP.entries()) {
+        const directSim = levenshteinSimilarity(cachedKey, sessionKey);
+        const wordSim = wordOrderIndependentSimilarity(cachedKey, sessionKey);
+        const sim = Math.max(directSim, wordSim);
+
+        if (sim >= 0.88) {
+          this.diagWarn(
+            'createQuery BLOCKED by session cache (fuzzy): "' + cleanKw +
+            '" ≈ "' + cachedEntry.keyword + '" (similarity=' + (sim * 100).toFixed(1) +
+            '%) → returning existing queryId=' + cachedEntry.queryId
+          );
+          // Cache under the new key too
+          SESSION_DEDUP_MAP.set(sessionKey, cachedEntry);
+          return { success: true, queryId: cachedEntry.queryId };
+        }
+      }
+
+      // ── Guard 3: Persistent localStorage cache ──────────────────────────
+      const persistentHit = findInPersistentCache(sessionKey);
+      if (persistentHit) {
+        this.diagWarn(
+          'createQuery BLOCKED by persistent cache: "' + cleanKw +
+          '" ≈ "' + persistentHit.keyword + '" → returning existing queryId=' + persistentHit.queryId
+        );
+        SESSION_DEDUP_MAP.set(sessionKey, {
+          queryId: persistentHit.queryId,
+          keyword: persistentHit.keyword,
+          createdAt: new Date(persistentHit.createdAt),
+          status: persistentHit.status,
+        });
+        return { success: true, queryId: persistentHit.queryId };
+      }
+
+      // ── All guards passed — create the query ────────────────────────────
+      this.diagInfo('Creating NEW query for "' + cleanKw + '" (original: "' + keyword + '") — passed all 3 dedup guards');
 
       const res = await this.callProxy('/new-query', {
         project: projectId,
@@ -477,12 +704,21 @@ export class NeuronWriterService {
         return { success: false, error: 'No query ID returned from NeuronWriter' };
       }
 
-      this.diagSuccess('Created NEW query ID=' + queryId + ' for "' + cleanKw + '"');
+      this.diagSuccess('Created NEW query ID=' + queryId + ' for "' + cleanKw + '" — cached in session + persistent');
 
+      // Cache in both layers
       SESSION_DEDUP_MAP.set(sessionKey, {
         queryId,
         keyword: cleanKw,
         createdAt: new Date(),
+        status: 'in_progress',
+      });
+
+      addToPersistentCache({
+        queryId,
+        keyword: cleanKw,
+        normalizedKeyword: sessionKey,
+        createdAt: Date.now(),
         status: 'in_progress',
       });
 
@@ -762,8 +998,10 @@ export class NeuronWriterService {
   static removeSessionEntry(keyword: string): boolean {
     const normalized = NeuronWriterService.cleanKeyword(keyword);
     const deleted = SESSION_DEDUP_MAP.delete(normalized);
+    // Also remove from persistent cache
+    removeFromPersistentCache(normalized);
     if (deleted) {
-      console.log('[NeuronWriter] 🗑️ Removed session cache entry for "' + normalized + '"');
+      console.log('[NeuronWriter] 🗑️ Removed session + persistent cache entry for "' + normalized + '"');
     }
     return deleted;
   }
@@ -791,9 +1029,11 @@ export function scoreContentAgainstNeuron(
   analysis: NeuronWriterAnalysis
 ): NeuronWriterLiveScore {
   if (!html || !analysis) {
-    return { score: 0, basicCoverage: 0, extendedCoverage: 0, entityCoverage: 0,
+    return {
+      score: 0, basicCoverage: 0, extendedCoverage: 0, entityCoverage: 0,
       headingCoverage: 0, missingBasicTerms: [], missingEntities: [],
-      missingHeadings: [], totalTerms: 0, matchedTerms: 0 };
+      missingHeadings: [], totalTerms: 0, matchedTerms: 0
+    };
   }
 
   const text = html.toLowerCase();

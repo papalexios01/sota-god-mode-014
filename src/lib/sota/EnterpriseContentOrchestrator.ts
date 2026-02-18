@@ -162,33 +162,33 @@ function simpleHash(str: string): string {
 
 function convertMarkdownToHTML(content: string): string {
   let html = content;
-  html = html.replace(/^####\s+(.+)$/gm, '<h4 style="color:#334155;font-size:19px;font-weight:700;margin:32px 0 12px 0;line-height:1.3">$1</h4>');
-  html = html.replace(/^###\s+(.+)$/gm, '<h3 style="color:#1e293b;font-size:23px;font-weight:800;margin:40px 0 16px 0;letter-spacing:-0.02em;line-height:1.3">$1</h3>');
-  html = html.replace(/^##\s+(.+)$/gm, '<h2 style="color:#0f172a;font-size:30px;font-weight:900;margin:56px 0 24px 0;padding-bottom:14px;border-bottom:4px solid #10b981;letter-spacing:-0.025em;line-height:1.2">$1</h2>');
+  html = html.replace(/^####\s+(.+)$/gm, '<h4 style="color:#334155;font-size:clamp(17px,2vw,20px);font-weight:700;margin:36px 0 14px 0;line-height:1.35;letter-spacing:-0.01em">$1</h4>');
+  html = html.replace(/^###\s+(.+)$/gm, '<h3 style="color:#1e293b;font-size:clamp(20px,2.5vw,24px);font-weight:800;margin:44px 0 18px 0;padding-left:20px;border-left:4px solid #10b981;letter-spacing:-0.02em;line-height:1.3">$1</h3>');
+  html = html.replace(/^##\s+(.+)$/gm, '<h2 style="color:#0f172a;font-size:clamp(24px,3.5vw,32px);font-weight:900;margin:64px 0 28px 0;padding-bottom:16px;border-bottom:3px solid transparent;background-image:linear-gradient(#fff,#fff),linear-gradient(135deg,#10b981,#059669,#047857);background-origin:padding-box,border-box;background-clip:padding-box,border-box;letter-spacing:-0.03em;line-height:1.2">$1</h2>');
   // ✅ FIX: Do NOT generate H1 tags. WordPress uses the post title as H1.
   // Having a second H1 in the content body hurts SEO and accessibility.
   // Convert # headings to H2 instead.
-  html = html.replace(/^#\s+(.+)$/gm, '<h2 style="color:#0f172a;font-size:30px;font-weight:900;margin:56px 0 24px 0;padding-bottom:14px;border-bottom:4px solid #10b981;letter-spacing:-0.025em;line-height:1.2">$1</h2>');
+  html = html.replace(/^#\s+(.+)$/gm, '<h2 style="color:#0f172a;font-size:clamp(24px,3.5vw,32px);font-weight:900;margin:64px 0 28px 0;padding-bottom:16px;border-bottom:3px solid transparent;background-image:linear-gradient(#fff,#fff),linear-gradient(135deg,#10b981,#059669,#047857);background-origin:padding-box,border-box;background-clip:padding-box,border-box;letter-spacing:-0.03em;line-height:1.2">$1</h2>');
 
-  html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+  html = html.replace(/\*\*(.+?)\*\*/g, '<strong style="color:#0f172a;font-weight:700">$1</strong>');
   html = html.replace(/(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)/g, '<em>$1</em>');
   html = html.replace(/_(.+?)_/g, '<em>$1</em>');
-  html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" style="color:#059669;text-decoration:underline;text-underline-offset:3px;font-weight:600">$1</a>');
-  html = html.replace(/^- (.+)$/gm, '<li style="margin-bottom:8px;line-height:1.8">$1</li>');
-  html = html.replace(/^\d+\. (.+)$/gm, '<li data-list-type="ol" style="margin-bottom:8px;line-height:1.8">$1</li>');
+  html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" style="color:#059669;text-decoration:underline;text-decoration-color:rgba(5,150,105,0.3);text-underline-offset:3px;font-weight:600">$1</a>');
+  html = html.replace(/^- (.+)$/gm, '<li style="margin-bottom:10px;line-height:1.85;font-size:clamp(15px,1.6vw,17px);color:#374151">$1</li>');
+  html = html.replace(/^\d+\. (.+)$/gm, '<li data-list-type="ol" style="margin-bottom:10px;line-height:1.85;font-size:clamp(15px,1.6vw,17px);color:#374151">$1</li>');
   html = html.replace(/(<li[^>]*>.*<\/li>\n?)+/g, (match) => {
     const isOrdered = match.includes('data-list-type="ol"');
     const tag = isOrdered ? 'ol' : 'ul';
     const cleaned = match.replace(/data-list-type="ol"/g, '');
-    return `<${tag} style="margin:20px 0;padding-left:24px;color:#374151">${cleaned}</${tag}>`;
+    return `<${tag} style="margin:24px 0;padding-left:28px;color:#374151">${cleaned}</${tag}>`;
   });
   html = html.replace(/```[\s\S]+?```/gs, (match) => {
     const code = match.replace(/```\w*\n?/, '').replace(/```$/, '');
-    return `<pre style="background:#f3f4f6;padding:16px;border-radius:8px;overflow-x:auto;margin:20px 0"><code style="color:#374141;font-size:14px">${code}</code></pre>`;
+    return `<pre style="background:linear-gradient(135deg,#f8fafc,#f1f5f9);padding:20px;border-radius:12px;overflow-x:auto;margin:28px 0;border:1px solid #e2e8f0"><code style="color:#334155;font-size:14px;line-height:1.7">${code}</code></pre>`;
   });
-  html = html.replace(/`(.+?)`/g, '<code style="background:#f3f4f6;padding:2px 6px;border-radius:4px;font-size:14px">$1</code>');
-  html = html.replace(/^>\s+(.+)$/gm, '<blockquote style="border-left:4px solid #10b981;padding-left:20px;margin:20px 0;color:#4b5563;font-style:italic">$1</blockquote>');
-  html = html.replace(/^---+$/gm, '<hr style="border:0;border-top:2px solid #e5e7eb;margin:32px 0">');
+  html = html.replace(/`(.+?)`/g, '<code style="background:#f1f5f9;padding:3px 8px;border-radius:6px;font-size:14px;color:#334155;border:1px solid #e2e8f0">$1</code>');
+  html = html.replace(/^>\s+(.+)$/gm, '<blockquote style="border-left:5px solid #8b5cf6;padding:24px 28px;margin:32px 0;background:linear-gradient(135deg,#f5f3ff,#ede9fe);border-radius:0 16px 16px 0;color:#4c1d95;font-style:italic;line-height:1.85">$1</blockquote>');
+  html = html.replace(/^---+$/gm, '<hr style="border:0;border-top:2px solid #e2e8f0;margin:48px 0">');
 
   const lines = html.split('\n');
   const processedLines: string[] = [];
@@ -198,7 +198,7 @@ function convertMarkdownToHTML(content: string): string {
       processedLines.push(lines[i]);
     } else {
       processedLines.push(
-        `<p style="color:#334155;font-size:18px;line-height:1.8;margin:0 0 20px 0">${line}</p>`
+        `<p style="color:#334155;font-size:clamp(16px,1.8vw,18px);line-height:1.85;margin:0 0 22px 0;letter-spacing:0.01em">${line}</p>`
       );
     }
   }
@@ -216,6 +216,8 @@ function convertMarkdownToHTML(content: string): string {
 
 function ensureProperHTMLStructure(content: string): string {
   let html = content;
+
+  // Fix nested/duplicate tags
   html = html.replace(/<p><p>/g, '<p>');
   html = html.replace(/<\/p><\/p>/g, '</p>');
   html = html.replace(/<\/div>(\s*)<h2/g, '</div>\n<h2');
@@ -225,24 +227,56 @@ function ensureProperHTMLStructure(content: string): string {
   html = html.replace(/<p>\s*<\/p>/g, '');
   html = html.replace(/<h2>(<h2[^>]*>)/g, '$1');
   html = html.replace(/<h3>(<h3[^>]*>)/g, '$1');
-  html = html.replace(/<h2(?![^>]*style)([^>]*)>/g, '<h2 style="color:#0f172a;font-size:30px;font-weight:900;margin:56px 0 24px 0;padding-bottom:14px;border-bottom:4px solid #10b981;letter-spacing:-0.025em;line-height:1.2"$1>');
-  html = html.replace(/<h3(?![^>]*style)([^>]*)>/g, '<h3 style="color:#1e293b;font-size:23px;font-weight:800;margin:40px 0 16px 0;letter-spacing:-0.02em;line-height:1.3"$1>');
-  html = html.replace(/<h4(?![^>]*style)([^>]*)>/g, '<h4 style="color:#334155;font-size:19px;font-weight:700;margin:32px 0 12px 0;line-height:1.3"$1>');
-  // ✅ FIX: Strip any H1 tags that slipped through — WordPress handles H1 via post title
-  html = html.replace(/<h1[^>]*>([\s\S]*?)<\/h1>/gi, '<h2 style="color:#0f172a;font-size:30px;font-weight:900;margin:56px 0 24px 0;padding-bottom:14px;border-bottom:4px solid #10b981;letter-spacing:-0.025em;line-height:1.2">$1</h2>');
 
+  // ── PREMIUM H2 STYLING ──────────────────────────────────────────────────────
+  // Modern gradient accent bar, premium typography, generous spacing
+  html = html.replace(/<h2(?![^>]*style)([^>]*)>/g,
+    '<h2 style="color:#0f172a;font-size:clamp(24px,3.5vw,32px);font-weight:900;margin:64px 0 28px 0;padding-bottom:16px;border-bottom:3px solid transparent;background-image:linear-gradient(#fff,#fff),linear-gradient(135deg,#10b981,#059669,#047857);background-origin:padding-box,border-box;background-clip:padding-box,border-box;letter-spacing:-0.03em;line-height:1.2;position:relative"$1>');
+
+  // ── PREMIUM H3 STYLING ──────────────────────────────────────────────────────
+  // Left accent dot, modern weight, refined spacing
+  html = html.replace(/<h3(?![^>]*style)([^>]*)>/g,
+    '<h3 style="color:#1e293b;font-size:clamp(20px,2.5vw,24px);font-weight:800;margin:44px 0 18px 0;padding-left:20px;border-left:4px solid #10b981;letter-spacing:-0.02em;line-height:1.3;position:relative"$1>');
+
+  // ── PREMIUM H4 STYLING ──────────────────────────────────────────────────────
+  html = html.replace(/<h4(?![^>]*style)([^>]*)>/g,
+    '<h4 style="color:#334155;font-size:clamp(17px,2vw,20px);font-weight:700;margin:36px 0 14px 0;line-height:1.35;letter-spacing:-0.01em"$1>');
+
+  // ✅ FIX: Strip any H1 tags that slipped through — WordPress handles H1 via post title
+  html = html.replace(/<h1[^>]*>([\s\S]*?)<\/h1>/gi,
+    '<h2 style="color:#0f172a;font-size:clamp(24px,3.5vw,32px);font-weight:900;margin:64px 0 28px 0;padding-bottom:16px;border-bottom:3px solid transparent;background-image:linear-gradient(#fff,#fff),linear-gradient(135deg,#10b981,#059669,#047857);background-origin:padding-box,border-box;background-clip:padding-box,border-box;letter-spacing:-0.03em;line-height:1.2">$1</h2>');
+
+  // ── PREMIUM WRAPPER ─────────────────────────────────────────────────────────
   if (!html.includes('data-premium-wp') && !html.includes('data-sota-content')) {
     const wrapperStart =
-      '<div data-sota-content="true" style="font-family:Inter,ui-sans-serif,system-ui,-apple-system,\'Segoe UI\',Roboto,Helvetica,Arial,sans-serif;line-height:1.75;color:#1e293b;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale">';
+      '<div data-sota-content="true" style="font-family:\'Inter\',ui-sans-serif,system-ui,-apple-system,\'Segoe UI\',Roboto,\'Helvetica Neue\',Arial,sans-serif;line-height:1.8;color:#1e293b;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;max-width:780px;margin:0 auto;padding:0 20px;word-wrap:break-word;overflow-wrap:break-word">';
     const wrapperEnd = '</div>';
     html = wrapperStart + html + wrapperEnd;
   }
 
+  // ── PREMIUM PARAGRAPH STYLING ───────────────────────────────────────────────
   html = html
-    .replace(/<p(?![^>]*style)([^>]*)>/g, '<p style="font-size:18px;margin:0 0 20px 0;line-height:1.8;color:#334155"$1>')
-    .replace(/<ul(?![^>]*style)([^>]*)>/g, '<ul style="margin:0 0 24px 0;padding-left:24px;list-style:none"$1>')
-    .replace(/<ol(?![^>]*style)([^>]*)>/g, '<ol style="margin:0 0 24px 0;padding-left:24px;counter-reset:item"$1>')
-    .replace(/<li(?![^>]*style)([^>]*)>/g, '<li style="margin:0 0 12px 0;padding-left:8px;line-height:1.75;position:relative"$1>');
+    .replace(/<p(?![^>]*style)([^>]*)>/g,
+      '<p style="font-size:clamp(16px,1.8vw,18px);margin:0 0 22px 0;line-height:1.85;color:#334155;letter-spacing:0.01em;word-spacing:0.02em"$1>')
+    // ── PREMIUM LIST STYLING ────────────────────────────────────────────────────
+    .replace(/<ul(?![^>]*style)([^>]*)>/g,
+      '<ul style="margin:0 0 28px 0;padding-left:0;list-style:none"$1>')
+    .replace(/<ol(?![^>]*style)([^>]*)>/g,
+      '<ol style="margin:0 0 28px 0;padding-left:0;counter-reset:item;list-style:none"$1>')
+    .replace(/<li(?![^>]*style)([^>]*)>/g,
+      '<li style="margin:0 0 14px 0;padding-left:36px;line-height:1.8;position:relative;font-size:clamp(15px,1.6vw,17px);color:#374151"$1>');
+
+  // ── PREMIUM BLOCKQUOTE STYLING ──────────────────────────────────────────────
+  html = html.replace(/<blockquote(?![^>]*style)([^>]*)>/g,
+    '<blockquote style="border-left:4px solid #8b5cf6;background:linear-gradient(135deg,#f5f3ff 0%,#ede9fe 100%);padding:24px 28px;margin:32px 0;border-radius:0 16px 16px 0;font-style:italic;color:#4c1d95;line-height:1.85;font-size:clamp(15px,1.6vw,17px)"$1>');
+
+  // ── PREMIUM STRONG/BOLD ─────────────────────────────────────────────────────
+  html = html.replace(/<strong(?![^>]*style)([^>]*)>/g,
+    '<strong style="color:#0f172a;font-weight:700"$1>');
+
+  // ── PREMIUM LINKS ───────────────────────────────────────────────────────────
+  html = html.replace(/<a(?![^>]*style)([^>]*)>/g,
+    '<a style="color:#059669;text-decoration:underline;text-decoration-color:rgba(5,150,105,0.3);text-underline-offset:3px;font-weight:600;transition:all 0.2s"$1>');
 
   return html;
 }
@@ -2199,17 +2233,44 @@ Return the COMPLETE article with humanized voice. Preserve ALL HTML structure ex
   }
 
   // ✅ FIX #9: Null-guard keyword before .split()
+  // v6.0: PREMIUM TITLE GENERATION — [Outcome + Keyword + Specificity]
+  // These titles become the WordPress H1 / title tag / SEO title.
+  // Formula: [Primary outcome] + [primary keyword] + [year/scope/result]
   private async generateTitle(keyword: string, serp: SERPAnalysis): Promise<string> {
     if (!keyword || typeof keyword !== 'string') return 'Untitled Content';
     const words = keyword.split(' ');
     const capitalized = words.map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+    const year = new Date().getFullYear();
+
+    // High-conversion title templates — each combines outcome + keyword + specificity
     const templates = [
-      `The Complete Guide to ${capitalized}`,
-      `${capitalized}: Everything You Need to Know`,
-      `How to Master ${capitalized} in 2026`,
-      `${capitalized} — Expert Tips & Strategies`,
-      `The Ultimate ${capitalized} Guide`,
+      `${capitalized} in ${year}: Exact System to Get Measurable Results`,
+      `${capitalized}: The ${year} Playbook That Actually Works (With Data)`,
+      `How to Master ${capitalized} — Step-by-Step System for ${year}`,
+      `${capitalized} Done Right: Proven Framework From 100+ Real Tests`,
+      `The Only ${capitalized} Guide You'll Need in ${year} (Expert-Tested)`,
+      `${capitalized}: Complete ${year} Blueprint With Real ROI Numbers`,
+      `Stop Wasting Time on ${capitalized} — Here's What Actually Works in ${year}`,
+      `${capitalized} That Delivers: Battle-Tested Strategy for ${year}`,
+      `${capitalized} in ${year}: The No-BS Guide With Actionable Steps`,
+      `What 95% Get Wrong About ${capitalized} (And How to Fix It in ${year})`,
+      `${capitalized}: Expert-Level ${year} Guide With Proven Workflows`,
+      `The ${capitalized} Advantage: Exact Tactics Top Performers Use in ${year}`,
     ];
+
+    // Check if SERP data has competitor titles we can beat
+    const hasCompetitorCount = serp.topCompetitors?.length > 0;
+    const avgWordCount = serp.avgWordCount || 2000;
+
+    // Add specificity-boosted templates based on SERP data
+    if (hasCompetitorCount && avgWordCount > 1500) {
+      templates.push(
+        `${capitalized}: Go Beyond the ${Math.round(avgWordCount / 100) * 100}-Word Guides Everyone Else Writes`,
+        `${capitalized} Masterclass: ${year} Edition With ${Math.min(serp.commonHeadings?.length || 10, 15)}+ Expert Sections`,
+      );
+    }
+
+    // Deterministic selection based on keyword hash
     const idx =
       Math.abs(keyword.split('').reduce((acc, c) => acc + c.charCodeAt(0), 0)) %
       templates.length;

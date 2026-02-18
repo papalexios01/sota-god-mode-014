@@ -250,13 +250,13 @@ ${BANNED_PHRASES.map((p) => `   ✗ "${p}"`).join("\n")}
 
 6. NEVER include meta-commentary ("In this article we'll cover…", "As mentioned above…", "Read on to learn…", "Let's explore…", "We'll discuss…", "Let's take a look at…").
 
-7. ALWAYS start the article with a specific stat, bold claim, counterintuitive fact, or direct statement — never a generic intro. First sentence must make someone stop scrolling.
+7. ALWAYS start the article with the PRE-TOC section (steps A-K). The very first sentence (Hook Line A) must be a specific stat, bold claim, counterintuitive fact, or direct pain-point — never a generic intro. First sentence must make someone stop scrolling.
 
 8. ALWAYS include the primary keyword naturally in the first 100 words.
 
 9. ALWAYS output WordPress-ready semantic HTML5 with inline styles. No markdown. No code fences. No code blocks.
 
-10. Start directly with the first <h2>.Do NOT include<h1> — WordPress handles that.
+10. Start with the PRE-TOC prose section (steps A through K from content_architecture), THEN the first <h2>. Do NOT include <h1> — WordPress handles that via the post title tag. The pre-TOC section uses paragraphs, styled boxes, and lists — NO headings.
 
 11. ALWAYS use contractions.Scan your output before submitting — every "do not" should be "don't", every "it is" should be "it's", every "can not" should be "can't".Zero exceptions.
 
@@ -266,27 +266,117 @@ ${BANNED_PHRASES.map((p) => `   ✗ "${p}"`).join("\n")}
 </absolute_rules>
 
     <content_architecture>
-  OPENING(first 100 - 150 words):
-• Lead with a jarring stat, a counterintuitive claim, or a blunt opinion — something that makes the reader stop scrolling
-• Primary keyword in the first sentence, naturally
-• State what the reader will walk away with in 1 - 2 punchy sentences
-• No throat - clearing.No "In today's world." Jump straight into value.
-• First sentence should sound like something a real person would say out loud
+PRE-TOC SECTION (THE MOST CRITICAL PART OF THE ARTICLE — before the table of contents):
+This section appears BEFORE the first H2. It is the single biggest driver of engagement, bounce rate reduction, and time-on-page. Follow this EXACT sequence:
 
-  BODY(H2 → H3 hierarchy):
+A) HOOK LINE (1 sentence — the FIRST thing the reader sees):
+Hit pain or opportunity immediately. Must be emotionally sharp and specific.
+Template: "Most [audience] waste [resource] on [common mistake] — this fixes that in [specific way]."
+Rules:
+• Primary keyword MUST appear in this sentence
+• No generic openers. No "In today's world." No throat-clearing.
+• The reader should feel a jolt — "this person gets my problem"
+
+B) READER QUALIFICATION (1–2 sentences):
+State WHO this is for and who it's NOT for. Reduces bounce and improves engagement.
+Template: "This guide is for [persona at stage]. If you need [different intent], try [other resource] instead."
+Rules:
+• Be specific about experience level: "intermediate marketers who already have traffic"
+• Mention what this is NOT: "This isn't a beginner intro — it's a production-ready system."
+
+C) PROBLEM FRAMING WITH CONSEQUENCE (2–4 sentences):
+Explain the core mistake in the market and what it costs.
+Structure:
+1. Current default: what people do → 2. Why it fails: mechanism → 3. Consequence: what they lose → 4. Thesis: your better approach
+Template:
+"[Audience] typically [common approach]. The problem? [Why it fails — specific mechanism]. The result: [lost traffic/revenue/time — be specific]. [Your thesis: the better approach]."
+Rules:
+• Include at least one specific number or percentage
+• Name the consequence in concrete terms (lost ranking, wasted budget, etc.)
+
+D) PROMISE / TRANSFORMATION (1–2 sentences):
+Clear "before → after." Must be concrete, not fluffy.
+Template: "By the end, you'll be able to [capability], avoid [pitfall], and get [measurable outcome]."
+Rules:
+• Use 2–3 specific deliverables
+• Include at least one number or timeline
+
+E) CREDIBILITY STACK (styled proof block):
+Add a compact trust section using a styled callout box. Include:
+• Years of experience or test volume
+• Number of projects/sites/results
+• Notable failures learned from
+• Scope of testing
+Use this HTML pattern:
+<div style="background: linear-gradient(135deg, #f0fdfa 0%, #ccfbf1 100%); border: 2px solid #14b8a6; padding: 24px 28px; border-radius: 16px; margin: 32px 0;">
+  <p style="font-weight: 800; color: #0f766e; margin: 0 0 12px; font-size: 17px;">🔬 What Backs This Guide</p>
+  <ul style="margin: 0; padding-left: 24px; color: #115e59; line-height: 1.9; font-size: 16px;">
+    <li>Tested across [X] sites / [Y] niches</li>
+    <li>Used in production on [Z]+ URLs</li>
+    <li>Includes failure cases and recovery playbooks</li>
+    <li>[Specific credential or proof point]</li>
+  </ul>
+</div>
+
+F) SNAPSHOT OUTCOMES — "What You'll Get" (5–8 outcome-focused bullets):
+Use a styled box with specific deliverables, not vague promises.
+Each bullet = one concrete outcome the reader walks away with.
+Examples:
+• Exact workflow from keyword research → publish → index → optimize
+• Tool stack with decision criteria for each choice
+• QA checklist to prevent thin/duplicate content
+• Internal linking model that scales to 1,000+ pages
+• Measurement dashboard + iteration loop
+
+G) TIME + DIFFICULTY ESTIMATE (compact inline display):
+People commit when scoped. Include:
+• Read time: [X] min
+• Implementation: [X] hours
+• Difficulty: [Beginner/Intermediate/Advanced]
+Use this HTML:
+<div style="display: flex; gap: 24px; margin: 24px 0; padding: 16px 24px; background: #f8fafc; border-radius: 12px; border: 1px solid #e2e8f0; flex-wrap: wrap;">
+  <span style="color: #64748b; font-size: 14px;">⏱ Read time: <strong style="color: #0f172a;">[X] min</strong></span>
+  <span style="color: #64748b; font-size: 14px;">🛠 Implementation: <strong style="color: #0f172a;">[X-Y] hours</strong></span>
+  <span style="color: #64748b; font-size: 14px;">📊 Difficulty: <strong style="color: #0f172a;">[Level]</strong></span>
+</div>
+
+H) PREREQUISITES / ASSUMPTIONS (1–3 sentences or short list):
+State what the reader should have ready before starting.
+• Access needed (CMS, analytics, tools)
+• Baseline knowledge assumed
+• Any tools or accounts required
+
+I) QUICK WIN BOX (instant value before TOC):
+Give ONE immediate actionable tip. This builds trust and keeps people reading.
+Use the green Key Takeaway box pattern:
+<div style="background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 50%, #bbf7d0 100%); border-left: 5px solid #16a34a; padding: 24px 28px; border-radius: 0 16px 16px 0; margin: 32px 0;">
+  <p style="font-weight: 800; color: #15803d; margin: 0 0 10px; font-size: 17px;">⚡ Quick Win</p>
+  <p style="color: #166534; margin: 0; line-height: 1.8; font-size: 16px;">[One specific, immediately actionable tip that delivers value right now.]</p>
+</div>
+
+J) "IF YOU ONLY READ ONE SECTION" POINTER (1 sentence):
+Guide skim readers to the highest-leverage section.
+Template: "Short on time? Jump straight to Section [X]: [name of highest-value section]."
+
+K) TRANSITION LINE INTO BODY (1 sentence):
+Create forward motion. Must feel natural, not forced.
+Template: "Now let's break this into the exact system, step by step."
+Do NOT use: "Let's dive in" / "Without further ado" / "Let's get started"
+
+BODY (H2 → H3 hierarchy — AFTER the pre-TOC section):
 • Each H2 section: 200 - 400 + words of substantive content
 • Each H2 answers one major question or covers one key subtopic
 • Use 2 - 4 H3s per H2 for structured depth
 • Every H2 must include at least one of: specific data point, real example, step - by - step process, expert insight, or comparison
 • Transition between sections with bridging sentences that connect ideas
 
-VISUAL ELEMENTS(distributed throughout):
+VISUAL ELEMENTS (distributed throughout):
 • 1 key takeaway / pro tip box per 600 - 800 words
-• 1 comparison table per article(where data comparison is relevant)
+• 1 comparison table per article (where data comparison is relevant)
 • Styled callout boxes for tips, warnings, and pro insights
 • Bulleted or numbered lists for scannability — but never more than 2 consecutive list elements without a prose paragraph between them
 
-  CLOSING(last 200 - 300 words):
+  CLOSING (last 200 - 300 words):
 • Summarize the 3 most actionable takeaways in a styled box
 • End with a direct challenge, a provocative question, or a "here's what to do Monday morning" call to action
 • Do NOT use "In conclusion", "To sum up", "To wrap up", or ANY closing cliché
@@ -324,70 +414,87 @@ NEURONWRITER COMPLIANCE(CRITICAL):
 </eeat_signals>
 
           <html_design_system>
-Use these styled HTML patterns throughout the article to create a professional, visually rich reading experience:
+Use these styled HTML patterns throughout the article to create a premium, magazine-quality reading experience. All styles use CSS clamp() for mobile responsiveness:
 
-KEY TAKEAWAY BOX(green):
-  <div style="background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%); border-left: 4px solid #16a34a; padding: 20px 24px; border-radius: 0 12px 12px 0; margin: 24px 0;" >
-    <p style="font-weight: 700; color: #15803d; margin: 0 0 8px; font-size: 16px;" >💡 Key Takeaway </p>
-      < p style = "color: #166534; margin: 0; line-height: 1.7;" > Content here.</p>
+KEY TAKEAWAY BOX (green):
+  <div style="background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 50%, #bbf7d0 100%); border-left: 5px solid #16a34a; padding: 24px 28px; border-radius: 0 16px 16px 0; margin: 32px 0; box-shadow: 0 4px 16px rgba(22,163,106,0.08);" >
+    <p style="font-weight: 800; color: #15803d; margin: 0 0 10px; font-size: 17px; letter-spacing: -0.01em;" >💡 Key Takeaway </p>
+      < p style = "color: #166534; margin: 0; line-height: 1.8; font-size: clamp(15px,1.6vw,17px);" > Content here.</p>
         </div>
 
-PRO TIP BOX(blue):
-  <div style="background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%); border-left: 4px solid #2563eb; padding: 20px 24px; border-radius: 0 12px 12px 0; margin: 24px 0;" >
-    <p style="font-weight: 700; color: #1e40af; margin: 0 0 8px; font-size: 16px;" >🎯 Pro Tip </p>
-      < p style = "color: #1e3a5f; margin: 0; line-height: 1.7;" > Content here.</p>
+PRO TIP BOX (blue):
+  <div style="background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 50%, #bfdbfe 100%); border-left: 5px solid #2563eb; padding: 24px 28px; border-radius: 0 16px 16px 0; margin: 32px 0; box-shadow: 0 4px 16px rgba(37,99,235,0.08);" >
+    <p style="font-weight: 800; color: #1e40af; margin: 0 0 10px; font-size: 17px; letter-spacing: -0.01em;" >🎯 Pro Tip </p>
+      < p style = "color: #1e3a5f; margin: 0; line-height: 1.8; font-size: clamp(15px,1.6vw,17px);" > Content here.</p>
         </div>
 
-  WARNING / IMPORTANT BOX(amber):
-  <div style="background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%); border-left: 4px solid #d97706; padding: 20px 24px; border-radius: 0 12px 12px 0; margin: 24px 0;" >
-    <p style="font-weight: 700; color: #92400e; margin: 0 0 8px; font-size: 16px;" >⚠️ Important </p>
-      < p style = "color: #78350f; margin: 0; line-height: 1.7;" > Content here.</p>
+  WARNING / IMPORTANT BOX (amber):
+  <div style="background: linear-gradient(135deg, #fffbeb 0%, #fef3c7 50%, #fde68a 100%); border-left: 5px solid #d97706; padding: 24px 28px; border-radius: 0 16px 16px 0; margin: 32px 0; box-shadow: 0 4px 16px rgba(217,119,6,0.08);" >
+    <p style="font-weight: 800; color: #92400e; margin: 0 0 10px; font-size: 17px; letter-spacing: -0.01em;" >⚠️ Important </p>
+      < p style = "color: #78350f; margin: 0; line-height: 1.8; font-size: clamp(15px,1.6vw,17px);" > Content here.</p>
         </div>
 
-EXPERT QUOTE BOX(purple):
-  <blockquote style="border-left: 4px solid #8b5cf6; background: linear-gradient(135deg, #f5f3ff 0%, #ede9fe 100%); padding: 20px 24px; margin: 24px 0; border-radius: 0 12px 12px 0; font-style: italic; color: #4c1d95; line-height: 1.8;" >
+EXPERT QUOTE BOX (purple):
+  <blockquote style="border-left: 5px solid #8b5cf6; background: linear-gradient(135deg, #f5f3ff 0%, #ede9fe 50%, #ddd6fe 100%); padding: 24px 28px; margin: 32px 0; border-radius: 0 16px 16px 0; font-style: italic; color: #4c1d95; line-height: 1.85; font-size: clamp(15px,1.6vw,17px); box-shadow: 0 4px 16px rgba(139,92,246,0.08);" >
     "Quote text here."
     </blockquote>
 
-STAT HIGHLIGHT BOX(slate):
-  <div style="background: linear-gradient(135deg, #f8fafc 0%, #e2e8f0 100%); border: 1px solid #cbd5e1; padding: 20px 24px; border-radius: 12px; margin: 24px 0; text-align: center;" >
-    <p style="font-size: 32px; font-weight: 800; color: #1e293b; margin: 0;" > 73 % </p>
-      < p style = "color: #64748b; margin: 4px 0 0; font-size: 14px;" > of businesses report X when they do Y </p>
+STAT HIGHLIGHT BOX (slate):
+  <div style="background: linear-gradient(135deg, #f8fafc 0%, #e2e8f0 100%); border: 1px solid #cbd5e1; padding: 28px 32px; border-radius: 16px; margin: 32px 0; text-align: center; box-shadow: 0 4px 16px rgba(0,0,0,0.04);" >
+    <p style="font-size: clamp(32px,5vw,42px); font-weight: 900; color: #0f172a; margin: 0; letter-spacing: -0.03em;" > 73 % </p>
+      < p style = "color: #64748b; margin: 8px 0 0; font-size: clamp(13px,1.4vw,15px); font-weight: 500;" > of businesses report X when they do Y </p>
         </div>
 
+QUICK SUMMARY BOX (teal):
+  <div style="background: linear-gradient(135deg, #f0fdfa 0%, #ccfbf1 100%); border: 2px solid #14b8a6; padding: 24px 28px; border-radius: 16px; margin: 32px 0; box-shadow: 0 4px 16px rgba(20,184,166,0.1);" >
+    <p style="font-weight: 800; color: #0f766e; margin: 0 0 12px; font-size: 17px;" >📋 Quick Summary </p>
+      <ul style="margin: 0; padding-left: 24px; color: #115e59; line-height: 1.8; font-size: clamp(14px,1.5vw,16px);">
+        <li style="margin-bottom: 8px;">Summary point 1</li>
+        <li style="margin-bottom: 8px;">Summary point 2</li>
+        <li>Summary point 3</li>
+      </ul>
+    </div>
+
 COMPARISON TABLE:
-  <div style="overflow-x: auto; margin: 24px 0; border-radius: 12px; border: 1px solid #e5e7eb;" >
-    <table style="width: 100%; border-collapse: collapse; font-size: 15px;" >
+  <div style="overflow-x: auto; margin: 32px 0; border-radius: 16px; border: 1px solid #e2e8f0; box-shadow: 0 4px 16px rgba(0,0,0,0.04);" >
+    <table style="width: 100%; border-collapse: collapse; font-size: clamp(13px,1.4vw,15px);" >
       <thead>
-      <tr style="background: linear-gradient(135deg, #1e293b 0%, #334155 100%);" >
-        <th style="padding: 14px 18px; text-align: left; color: #f8fafc; font-weight: 600;" > Feature </th>
-          < th style = "padding: 14px 18px; text-align: left; color: #f8fafc; font-weight: 600;" > Option A </th>
-            < th style = "padding: 14px 18px; text-align: left; color: #f8fafc; font-weight: 600;" > Option B </th>
+      <tr style="background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);" >
+        <th style="padding: 16px 20px; text-align: left; color: #f8fafc; font-weight: 700; letter-spacing: 0.02em;" > Feature </th>
+          < th style = "padding: 16px 20px; text-align: left; color: #f8fafc; font-weight: 700;" > Option A </th>
+            < th style = "padding: 16px 20px; text-align: left; color: #f8fafc; font-weight: 700;" > Option B </th>
               </tr>
               </thead>
               < tbody >
-              <tr style="background: #f8fafc;" > <td style="padding: 12px 18px; border-top: 1px solid #e5e7eb;" > Row < /td><td style="padding: 12px 18px; border-top: 1px solid #e5e7eb;">Data</td > <td style="padding: 12px 18px; border-top: 1px solid #e5e7eb;" > Data < /td></tr >
-                <tr style="background: #ffffff;" > <td style="padding: 12px 18px; border-top: 1px solid #e5e7eb;" > Row < /td><td style="padding: 12px 18px; border-top: 1px solid #e5e7eb;">Data</td > <td style="padding: 12px 18px; border-top: 1px solid #e5e7eb;" > Data < /td></tr >
+              <tr style="background: #f8fafc;" > <td style="padding: 14px 20px; border-top: 1px solid #e2e8f0;" > Row < /td><td style="padding: 14px 20px; border-top: 1px solid #e2e8f0;">Data</td > <td style="padding: 14px 20px; border-top: 1px solid #e2e8f0;" > Data < /td></tr >
+                <tr style="background: #ffffff;" > <td style="padding: 14px 20px; border-top: 1px solid #e2e8f0;" > Row < /td><td style="padding: 14px 20px; border-top: 1px solid #e2e8f0;">Data</td > <td style="padding: 14px 20px; border-top: 1px solid #e2e8f0;" > Data < /td></tr >
                   </tbody>
                   </table>
                   </div>
 
   STEP - BY - STEP NUMBERED LIST:
-  <ol style="counter-reset: steps; list-style: none; padding: 0; margin: 24px 0;" >
-    <li style="counter-increment: steps; padding: 16px 20px 16px 56px; position: relative; margin-bottom: 8px; background: #f8fafc; border-radius: 8px; border: 1px solid #e5e7eb;" >
-      <span style="position: absolute; left: 16px; top: 50%; transform: translateY(-50%); width: 28px; height: 28px; background: #2563eb; color: white; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 14px;" > 1 </span>
+  <ol style="counter-reset: steps; list-style: none; padding: 0; margin: 32px 0;" >
+    <li style="counter-increment: steps; padding: 18px 24px 18px 64px; position: relative; margin-bottom: 12px; background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%); border-radius: 12px; border: 1px solid #e2e8f0; box-shadow: 0 2px 8px rgba(0,0,0,0.03);" >
+      <span style="position: absolute; left: 18px; top: 50%; transform: translateY(-50%); width: 32px; height: 32px; background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: 14px; box-shadow: 0 2px 8px rgba(16,185,129,0.3);" > 1 </span>
         < strong > Step title </strong> — Step description here.
           </li>
           </ol>
 
-VISUAL BREAK RULE(CRITICAL):
-• Never write more than 200 words of consecutive < p > text without a visual HTML element(callout box, table, blockquote, list, stat highlight, or figure)
+VISUAL BREAK RULE (CRITICAL):
+• Never write more than 200 words of consecutive < p > text without a visual HTML element (callout box, table, blockquote, list, stat highlight, or figure)
 • If a section runs long, break it up with a styled element — this directly impacts readability scores
 • Count words between styled elements and ensure no gap exceeds ~180 words
 
+MOBILE RESPONSIVENESS (CRITICAL):
+• All font - sizes MUST use CSS clamp() — e.g., clamp(16px, 1.8vw, 18px) — for automatic mobile scaling
+• Tables MUST be wrapped in a div with overflow-x: auto for horizontal scrolling on mobile
+• Images MUST use max-width: 100% and height: auto
+• Callout box padding should be responsive — at minimum 20px on mobile
+• Never use fixed pixel widths on containers — use max-width and percentages
+
   REQUIREMENTS:
-• Use 4 - 6 of these styled elements per article, distributed across sections
-• Minimum: 1 key takeaway, 1 pro tip or warning, 1 table or stat box
+• Use 5 - 8 of these styled elements per article, distributed across sections
+• Minimum: 1 key takeaway, 1 pro tip or warning, 1 table or stat box, 1 summary or quote
 • Never place two styled boxes back - to - back without a prose paragraph between them
     </html_design_system>`;
 }
@@ -570,14 +677,21 @@ CRITICAL — NeuronWriter score target: 90%+. Every term matters.
   sections.push(
     `Write the complete blog post now as clean WordPress-ready HTML.`,
   );
-  sections.push(`• Start with the first <h2> tag — no preamble, no <h1>`);
+  sections.push(`CRITICAL STRUCTURE ORDER:`);
+  sections.push(`1. START with the PRE-TOC section (steps A through K from content_architecture) — this is paragraphs, NOT headings`);
+  sections.push(`   - Hook line (A), reader qualification (B), problem framing (C), promise (D)`);
+  sections.push(`   - Credibility stack box (E), snapshot outcomes (F), time/difficulty estimate (G)`);
+  sections.push(`   - Prerequisites (H), Quick Win box (I), skim-reader pointer (J), transition (K)`);
+  sections.push(`2. THEN start the H2 body sections — the pre-TOC section has NO H2 headings`);
+  sections.push(`3. Do NOT include <h1> — WordPress handles the H1 via the post title tag`);
   sections.push(`• Target: ${targetWordCount}+ words (aim for ${Math.round(targetWordCount * 1.1)})`);
   sections.push(`• Incorporate ALL NeuronWriter terms, entities, and headings naturally`);
-  sections.push(`• Use 4-6 styled HTML design elements (callout boxes, tables, stat boxes)`);
+  sections.push(`• Use 5-8 styled HTML design elements (callout boxes, tables, stat boxes, summary boxes)`);
   sections.push(`• Include ${internalLinks?.length ? Math.min(internalLinks.length, 12) : "4-8"} internal links`);
   sections.push(
     `• Every paragraph must pass the "So What?" test — if a reader can say "So what?" after reading it, rewrite it with specifics`,
   );
+  sections.push(`• The pre-TOC section alone should be 300-500 words of high-impact prose`);
   sections.push(`• Make this the single best article on "${primaryKeyword}" on the entire internet`);
   sections.push(`</generate>`);
 

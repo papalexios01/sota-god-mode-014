@@ -1,11 +1,15 @@
 /**
- * God Mode 2.0 - Content Preview Modal
+ * God Mode 2.0 - Content Preview Modal v2.0
  * 
  * View, copy, and manually publish generated content from history.
  * Essential for reviewing content that didn't meet quality threshold.
+ * 
+ * v2.0: Uses createPortal to render at document.body level, preventing
+ * click events from bubbling up and causing navigation/redirection.
  */
 
-import { useState } from 'react';
+import { useState, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { X, Copy, ExternalLink, FileText, CheckCircle2, AlertTriangle, Send, Eye } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
@@ -23,6 +27,12 @@ export function GodModeContentPreview({ item, onClose }: GodModeContentPreviewPr
   const { config } = useOptimizerStore();
 
   const content = item.generatedContent;
+
+  // Prevent click events from bubbling through the portal overlay
+  const stopPropagation = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation();
+    e.preventDefault();
+  }, []);
 
   const handleCopyContent = async () => {
     if (!content?.content) return;
@@ -116,9 +126,13 @@ export function GodModeContentPreview({ item, onClose }: GodModeContentPreviewPr
   };
 
   if (!content) {
-    return (
-      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-        <div className="bg-card border border-border rounded-2xl p-8 max-w-md text-center">
+    return createPortal(
+      <div
+        className="fixed inset-0 z-[70] flex items-center justify-center bg-black/60 backdrop-blur-sm"
+        onClick={onClose}
+        onMouseDown={stopPropagation}
+      >
+        <div className="bg-card border border-border rounded-2xl p-8 max-w-md text-center" onClick={stopPropagation}>
           <AlertTriangle className="w-12 h-12 text-yellow-400 mx-auto mb-4" />
           <h3 className="text-lg font-semibold text-foreground mb-2">No Content Available</h3>
           <p className="text-muted-foreground mb-4">
@@ -132,13 +146,21 @@ export function GodModeContentPreview({ item, onClose }: GodModeContentPreviewPr
             Close
           </button>
         </div>
-      </div>
+      </div>,
+      document.body
     );
   }
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-      <div className="bg-card border border-border rounded-2xl w-full max-w-5xl max-h-[90vh] flex flex-col overflow-hidden">
+  return createPortal(
+    <div
+      className="fixed inset-0 z-[70] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
+      onClick={onClose}
+      onMouseDown={stopPropagation}
+    >
+      <div
+        className="bg-card border border-border rounded-2xl w-full max-w-5xl max-h-[90vh] flex flex-col overflow-hidden"
+        onClick={stopPropagation}
+      >
         {/* Header */}
         <div className="flex items-center justify-between p-4 border-b border-border bg-muted/30">
           <div className="flex items-center gap-3">
@@ -287,6 +309,7 @@ export function GodModeContentPreview({ item, onClose }: GodModeContentPreviewPr
           </div>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }

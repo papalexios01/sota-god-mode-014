@@ -74,7 +74,7 @@ import {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /** Maximum number of NeuronWriter improvement attempts before giving up */
-const NW_MAX_IMPROVEMENT_ATTEMPTS = 6;
+const NW_MAX_IMPROVEMENT_ATTEMPTS = 3;
 
 /** Target NeuronWriter score — the loop stops when this is reached */
 const NW_TARGET_SCORE = 90;

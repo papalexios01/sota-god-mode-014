@@ -600,11 +600,16 @@ export class EnterpriseContentOrchestrator {
 
           // ✅ FIX: "Ready but empty" — this query is PERMANENTLY broken.
           // Don't poll it 39 more times. Force a new query.
-          this.warn(
-            'NeuronWriter: Query ' + queryId + ' is READY but has ZERO terms/headings. ' +
-            'This query is permanently broken. Creating a replacement...'
-          );
-          queryId = '';
+                this.warn(
+        'NeuronWriter: Query ' + queryId + ' is READY but has ZERO terms/headings. ' +
+        'This query is permanently broken. Creating a replacement...'
+      );
+
+      // ✅ FIX: Clear session cache so createQuery() doesn't return the broken ID
+      NeuronWriterService.removeSessionEntry(nwKeyword);
+
+      queryId = '';
+
           // Fall through to Step 3 to create a new query
         }
       } catch (e) {

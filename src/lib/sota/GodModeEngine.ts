@@ -1,7 +1,12 @@
 // src/lib/sota/GodModeEngine.ts
 // ═══════════════════════════════════════════════════════════════════════════════
-// GOD MODE ENGINE v2.1 — Autonomous SEO Maintenance Engine
+// GOD MODE ENGINE v2.2 — Autonomous SEO Maintenance Engine
 // ═══════════════════════════════════════════════════════════════════════════════
+//
+// v2.2 Fixes (on top of v2.1):
+//   • FIXED: generateContent() call signature — single options object, not 3 args
+//   • FIXED: sessionStartedAt no longer overwritten to null every cycle
+//   • FIXED: sitePages passed to orchestrator so internal link injection works
 //
 // v2.1 Fixes & Improvements:
 //   • FIXED: extractKeyword robustly handles non-semantic slugs (p12345, a1b2c3)
@@ -159,7 +164,7 @@ export class GodModeEngine {
     this.adaptiveThrottleMs = ENTERPRISE_CONSTANTS.ADAPTIVE_THROTTLE_MIN_MS;
 
     const modeLabel = this.options.priorityOnlyMode ? 'PRIORITY ONLY' : 'FULL SITEMAP';
-    this.log('success', `GOD MODE 2.1 ACTIVATED — Mode: ${modeLabel}`, 'Autonomous SEO engine is now running');
+    this.log('success', `GOD MODE 2.2 ACTIVATED — Mode: ${modeLabel}`, 'Autonomous SEO engine is now running');
 
     this.updateState({
       status: 'running',
@@ -229,6 +234,18 @@ export class GodModeEngine {
   private initializeOrchestrator(): void {
     const appConfig = this.options.getAppConfig();
 
+    // ✅ FIX #3: Build sitePages from all available URLs so internal linking works
+    const allUrls = [
+      ...this.options.sitemapUrls,
+      ...this.options.priorityUrls.map((p) => p.url),
+    ];
+    const uniqueUrls = [...new Set(allUrls)];
+    const sitePages = uniqueUrls.map((url) => ({
+      url,
+      title: this.extractKeyword(url),
+      keywords: this.extractKeyword(url),
+    }));
+
     this.orchestrator = createOrchestrator({
       apiKeys: {
         geminiApiKey: appConfig.geminiApiKey ?? '',
@@ -244,6 +261,8 @@ export class GodModeEngine {
       organizationUrl: appConfig.wpUrl ?? 'https://example.com',
       authorName: appConfig.authorName ?? 'Content Team',
       primaryModel: (appConfig.primaryModel as any) ?? 'gemini',
+      // ✅ FIX #3: Pass sitePages to orchestrator for internal link injection
+      sitePages,
       // FIX: Always pass NW credentials regardless of flag (failsafe)
       neuronWriterApiKey:
         appConfig.enableNeuronWriter &&
@@ -396,10 +415,12 @@ export class GodModeEngine {
         }
 
         this.cycleCount++;
+
+        // ✅ FIX #2: Do NOT overwrite sessionStartedAt — it was set once in start()
         this.updateState({
           stats: {
             cycleCount: this.cycleCount,
-            sessionStartedAt: null,
+            // sessionStartedAt intentionally OMITTED — preserved from start()
             lastScanAt: this.lastScanTime,
             nextScanAt: this.calculateNextScan(),
             totalProcessed: 0,
@@ -454,6 +475,8 @@ export class GodModeEngine {
     this.log('info', 'Scanning sitemap...', `${this.options.sitemapUrls.length} URLs available`);
 
     this.lastScanTime = new Date();
+
+    // ✅ FIX #2: Do NOT overwrite sessionStartedAt
     this.updateState({
       stats: {
         lastScanAt: this.lastScanTime,
@@ -463,7 +486,7 @@ export class GodModeEngine {
         errorCount: 0,
         avgQualityScore: 0,
         totalWordsGenerated: 0,
-        sessionStartedAt: null,
+        // sessionStartedAt intentionally OMITTED
         cycleCount: this.cycleCount,
       },
     });
@@ -614,7 +637,11 @@ export class GodModeEngine {
 
       if (!this.orchestrator) this.initializeOrchestrator();
 
-      const content = await this.orchestrator!.generateContent(keyword, title, {
+      // ✅ FIX #1: Pass a SINGLE options object to generateContent()
+      //    Previously this was called as generateContent(keyword, title, {...})
+      //    which silently assigned the string `keyword` to the `options` parameter,
+      //    causing options.keyword to be undefined → TypeError → "Status: error"
+      const content = await this.orchestrator!.generateContent({
         keyword,
         title,
         contentType: 'guide',
@@ -1029,6 +1056,7 @@ export class GodModeEngine {
   // HELPERS — STATE, STATS, HISTORY
   // ─────────────────────────────────────────────────────────────────────────
 
+  // ✅ FIX #2: updateStats no longer sends sessionStartedAt: null
   private updateStats(
     qualityScore: number,
     wordCount: number,
@@ -1042,7 +1070,7 @@ export class GodModeEngine {
         qualityScore,
         wordCount,
         cycleCount: this.cycleCount,
-        sessionStartedAt: null,
+        // sessionStartedAt intentionally OMITTED — preserved from start()
         lastScanAt: this.lastScanTime,
         nextScanAt: this.calculateNextScan(),
         avgQualityScore: 0,

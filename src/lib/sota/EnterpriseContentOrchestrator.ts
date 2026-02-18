@@ -516,183 +516,110 @@ export class EnterpriseContentOrchestrator {
   // ─────────────────────────────────────────────────────────────────────────
 
   private async maybeInitNeuronWriter(
-    keyword: string,
-    options: GenerationOptions
-  ): Promise<NeuronBundle | null> {
-    const apiKey = this.config.neuronWriterApiKey?.trim();
-    const projectId = this.config.neuronWriterProjectId?.trim();
+  keyword: string,
+  options: GenerationOptions
+): Promise<NeuronBundle | null> {
+  const apiKey = this.config.neuronWriterApiKey?.trim();
+  const projectId = this.config.neuronWriterProjectId?.trim();
+  if (!apiKey || !projectId) return null;
 
-    if (!apiKey || !projectId) {
-      this.log(
-        `NeuronWriter SKIPPED — API key: ${apiKey ? `present (${apiKey.length} chars)` : 'MISSING'}, ` +
-          `Project ID: ${projectId ? 'present' : 'MISSING'}`
-      );
-      return null;
+  const service = createNeuronWriterService(apiKey);
+  const nwKeyword = NeuronWriterService.cleanKeyword(keyword);
+
+  this.log('NeuronWriter: keyword="' + nwKeyword + '" (raw: "' + keyword + '")');
+
+  // ── Step 1: Check if provided query ID is valid ──────────────────────────
+  let queryId = options.neuronWriterQueryId?.trim() || '';
+
+  // ── Step 2: Search for existing query — ALL statuses ────────────────────
+  if (!queryId) {
+    const searchResult = await service.findQueryByKeyword(projectId, nwKeyword);
+    if (searchResult.success && searchResult.query) {
+      queryId = searchResult.query.id;
+      this.log('NeuronWriter: Reusing existing query ID=' + queryId + ' status=' + searchResult.query.status);
     }
-
-    const service = createNeuronWriterService(apiKey);
-
-    // FIX: Always use clean human-readable keyword for NeuronWriter
-    const nwKeyword = this.cleanKeywordForNeuronWriter(keyword);
-    this.log(`NeuronWriter: Initializing... keyword="${nwKeyword}" (original slug: "${keyword}")`);
-
-    const queryIdFromOptions = options.neuronWriterQueryId?.trim();
-    let queryId = queryIdFromOptions;
-
-    // ── Step 1: Find existing ready query ──────────────────────────────────
-    if (!queryId) {
-      this.log('NeuronWriter: Searching for existing query matching keyword...');
-      try {
-        // FIX: use nwKeyword (clean), not raw keyword (slug)
-        const searchResult = await service.findQueryByKeyword(projectId, nwKeyword);
-
-        if (searchResult.success && searchResult.query) {
-          const tempQueryId = searchResult.query.id;
-          this.log(
-            `NeuronWriter: Found existing query "${searchResult.query.keyword}" ID=${tempQueryId}`
-          );
-
-          const existingAnalysis = await service.getQueryAnalysis(tempQueryId);
-
-          if (existingAnalysis.success && existingAnalysis.analysis) {
-            // FIX: Accept any data (terms > 0 OR headings > 0), not strict threshold
-            const hasAnyData =
-              (existingAnalysis.analysis.terms?.length ?? 0) > 0 ||
-              (existingAnalysis.analysis.headingsH2?.length ?? 0) > 0;
-
-            if (hasAnyData) {
-              queryId = tempQueryId;
-              this.log(
-                `NeuronWriter: ✅ Existing query accepted — ` +
-                  `${existingAnalysis.analysis.terms?.length ?? 0} terms, ` +
-                  `${existingAnalysis.analysis.headingsH2?.length ?? 0} H2s`
-              );
-            } else {
-              this.log(
-                'NeuronWriter: Existing query has no data yet — will create fresh query.'
-              );
-            }
-          } else if (!existingAnalysis.success) {
-            // Analysis not ready but query exists — reuse ID and poll (no duplicate creation)
-            const errMsg = existingAnalysis.error || '';
-            const isStillProcessing =
-              /not ready|processing|pending|waiting/i.test(errMsg);
-
-            if (isStillProcessing) {
-              queryId = tempQueryId;
-              this.log(
-                `NeuronWriter: Query found but analysis still processing — reusing ID ${tempQueryId} for polling.`
-              );
-            } else {
-              this.log(
-                `NeuronWriter: Analysis fetch failed (${errMsg}) — will create new query.`
-              );
-            }
-          }
-        }
-      } catch (searchErr) {
-        this.warn(`NeuronWriter: Search failed: ${searchErr}, will create new query`);
-      }
-    }
-
-    // ── Step 2: Create new query if needed ─────────────────────────────────
-    if (!queryId) {
-      const MAX_CREATE_RETRIES = 3;
-      for (let createAttempt = 1; createAttempt <= MAX_CREATE_RETRIES; createAttempt++) {
-        this.log(
-          `NeuronWriter: Creating new query for "${nwKeyword}"... attempt ${createAttempt}/${MAX_CREATE_RETRIES}`
-        );
-        try {
-          // FIX: createQuery also receives nwKeyword (clean), not slug
-          const created = await service.createQuery(projectId, nwKeyword);
-          if (created.success && created.queryId) {
-            queryId = created.queryId;
-            this.log(`NeuronWriter: Created NEW query ID=${queryId}`);
-            break;
-          }
-          this.warn(`NeuronWriter: Create attempt ${createAttempt} failed: ${created.error ?? 'unknown error'}`);
-        } catch (createErr) {
-          this.warn(`NeuronWriter: Create attempt ${createAttempt} error: ${createErr}`);
-        }
-
-        if (createAttempt < MAX_CREATE_RETRIES) {
-          const retryDelay = createAttempt * 3000;
-          this.log(`NeuronWriter: Retrying query creation in ${retryDelay / 1000}s...`);
-          await this.sleep(retryDelay);
-        }
-      }
-    }
-
-    if (!queryId) {
-      this.warn('NeuronWriter: FAILED to obtain query ID. Proceeding WITHOUT NeuronWriter optimization.');
-      return null;
-    }
-
-    // ── Step 3: Poll for analysis readiness ────────────────────────────────
-    if (queryIdFromOptions) {
-      this.log(`NeuronWriter: Using provided query ID=${queryId}`);
-    }
-
-    let lastStatus = '';
-    let consecutivePollErrors = 0;
-    const MAX_CONSECUTIVE_POLL_ERRORS = 5;
-
-    for (let attempt = 1; attempt <= NW_MAX_POLL_ATTEMPTS; attempt++) {
-      try {
-        const analysisRes = await service.getQueryAnalysis(queryId);
-        consecutivePollErrors = 0;
-
-        if (analysisRes.success && analysisRes.analysis) {
-          const summary = service.getAnalysisSummary(analysisRes.analysis);
-          this.log(`NeuronWriter: Analysis READY — ${summary}`);
-
-          const hasTerms = (analysisRes.analysis.terms?.length ?? 0) > 0;
-          const hasHeadings = (analysisRes.analysis.headingsH2?.length ?? 0) > 0;
-
-          if (!hasTerms && !hasHeadings) {
-            this.warn(
-              'NeuronWriter: Analysis returned but contains no terms or headings. ' +
-                'Proceeding without NW optimization.'
-            );
-            return null;
-          }
-
-          return { service, queryId, analysis: analysisRes.analysis };
-        }
-
-        const msg = analysisRes.error ?? 'Query not ready';
-        const currentStatusMatch = msg.match(/status="?([^"]+)"?/i);
-        const currentStatus = currentStatusMatch?.[1] ?? '';
-        const looksNotReady = /not ready|status|waiting|in progress/i.test(msg);
-
-        if (!looksNotReady) {
-          this.warn(`NeuronWriter: Analysis failed permanently: ${msg}`);
-          return null;
-        }
-
-        if (currentStatus !== lastStatus) {
-          this.log(`NeuronWriter: Status "${currentStatus}" — processing...`);
-          lastStatus = currentStatus;
-        }
-
-        const delay = attempt <= 3 ? 2000 : attempt <= 10 ? 4000 : 6000;
-        this.log(`NeuronWriter: Waiting for analysis... attempt ${attempt}/${NW_MAX_POLL_ATTEMPTS}`);
-        await this.sleep(delay);
-      } catch (pollErr) {
-        consecutivePollErrors++;
-        this.warn(`NeuronWriter: Poll attempt ${attempt} failed: ${pollErr}`);
-
-        if (consecutivePollErrors >= MAX_CONSECUTIVE_POLL_ERRORS) {
-          this.warn(`NeuronWriter: ${MAX_CONSECUTIVE_POLL_ERRORS} consecutive poll errors — giving up.`);
-          return null;
-        }
-        await this.sleep(3000);
-      }
-    }
-
-    this.warn(`NeuronWriter: Analysis timed out after ${NW_MAX_POLL_ATTEMPTS} attempts. Check NeuronWriter dashboard.`);
-    return null;
   }
+
+  // ── Step 3: Create ONLY if no existing query found ───────────────────────
+  if (!queryId) {
+    this.log('NeuronWriter: No existing query — creating new one for "' + nwKeyword + '"');
+    const created = await service.createQuery(projectId, nwKeyword);
+    if (!created.success || !created.queryId) {
+      this.warn('NeuronWriter: createQuery failed: ' + (created.error ?? 'unknown'));
+      return null;
+    }
+    queryId = created.queryId;
+    this.log('NeuronWriter: Created ID=' + queryId);
+  }
+
+  // ── Step 4: Poll until ready ─────────────────────────────────────────────
+  for (let attempt = 1; attempt <= 40; attempt++) {
+    const res = await service.getQueryAnalysis(queryId);
+    if (res.success && res.analysis) {
+      this.log('NeuronWriter: Ready — ' + service.getAnalysisSummary(res.analysis));
+      return { service, queryId, analysis: res.analysis };
+    }
+    const delay = attempt <= 3 ? 2000 : attempt <= 10 ? 4000 : 6000;
+    this.log('NeuronWriter: Waiting... attempt ' + attempt + '/40');
+    await this.sleep(delay);
+  }
+
+  this.warn('NeuronWriter: Analysis timed out after 40 attempts');
+  return null;
+}
+private async maybeInitNeuronWriter(
+  keyword: string,
+  options: GenerationOptions
+): Promise<NeuronBundle | null> {
+  const apiKey = this.config.neuronWriterApiKey?.trim();
+  const projectId = this.config.neuronWriterProjectId?.trim();
+  if (!apiKey || !projectId) return null;
+
+  const service = createNeuronWriterService(apiKey);
+  const nwKeyword = NeuronWriterService.cleanKeyword(keyword);
+
+  this.log('NeuronWriter: keyword="' + nwKeyword + '" (raw: "' + keyword + '")');
+
+  // ── Step 1: Check if provided query ID is valid ──────────────────────────
+  let queryId = options.neuronWriterQueryId?.trim() || '';
+
+  // ── Step 2: Search for existing query — ALL statuses ────────────────────
+  if (!queryId) {
+    const searchResult = await service.findQueryByKeyword(projectId, nwKeyword);
+    if (searchResult.success && searchResult.query) {
+      queryId = searchResult.query.id;
+      this.log('NeuronWriter: Reusing existing query ID=' + queryId + ' status=' + searchResult.query.status);
+    }
+  }
+
+  // ── Step 3: Create ONLY if no existing query found ───────────────────────
+  if (!queryId) {
+    this.log('NeuronWriter: No existing query — creating new one for "' + nwKeyword + '"');
+    const created = await service.createQuery(projectId, nwKeyword);
+    if (!created.success || !created.queryId) {
+      this.warn('NeuronWriter: createQuery failed: ' + (created.error ?? 'unknown'));
+      return null;
+    }
+    queryId = created.queryId;
+    this.log('NeuronWriter: Created ID=' + queryId);
+  }
+
+  // ── Step 4: Poll until ready ─────────────────────────────────────────────
+  for (let attempt = 1; attempt <= 40; attempt++) {
+    const res = await service.getQueryAnalysis(queryId);
+    if (res.success && res.analysis) {
+      this.log('NeuronWriter: Ready — ' + service.getAnalysisSummary(res.analysis));
+      return { service, queryId, analysis: res.analysis };
+    }
+    const delay = attempt <= 3 ? 2000 : attempt <= 10 ? 4000 : 6000;
+    this.log('NeuronWriter: Waiting... attempt ' + attempt + '/40');
+    await this.sleep(delay);
+  }
+
+  this.warn('NeuronWriter: Analysis timed out after 40 attempts');
+  return null;
+}
+
 
   // ─────────────────────────────────────────────────────────────────────────
   // NEURONWRITER IMPROVEMENT LOOP

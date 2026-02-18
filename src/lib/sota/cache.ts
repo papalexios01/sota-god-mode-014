@@ -1,5 +1,10 @@
 // src/lib/sota/cache.ts
-// GENERATION CACHE v2.2 — No .finally() anywhere
+// ═══════════════════════════════════════════════════════════════════════════════
+// GENERATION CACHE v2.2 — In-Memory LRU Cache
+//
+// ZERO .finally() calls. Stores ONLY resolved plain objects, never Promises.
+// Exports: generationCache, serpCache
+// ═══════════════════════════════════════════════════════════════════════════════
 
 interface CacheEntry<T = unknown> {
   value: T;
@@ -36,17 +41,31 @@ class GenerationCache {
 
   set<T = unknown>(key: string | Record<string, unknown>, value: T, ttl?: number): void {
     const k = this.normalizeKey(key);
+
+    // SAFETY: Never cache Promises. They don't survive retrieval correctly.
+    // The old cache called .finally() on values — if a plain object was passed,
+    // it crashed with "r.finally is not a function".
     if (value && typeof (value as any).then === 'function') {
-      console.warn('[GenerationCache] Attempted to cache a Promise. Skipping.');
+      console.warn(
+        '[GenerationCache] WARNING: Attempted to cache a Promise/thenable. ' +
+        'Only resolved plain objects should be cached. Skipping cache write.'
+      );
       return;
     }
+
     if (this.cache.size >= this.maxSize && !this.cache.has(k)) {
       this.evictLRU();
     }
+
     let estimatedSize = 0;
     try {
-      estimatedSize = typeof value === 'string' ? value.length : JSON.stringify(value)?.length ?? 0;
-    } catch { estimatedSize = 0; }
+      estimatedSize = typeof value === 'string'
+        ? value.length
+        : JSON.stringify(value)?.length ?? 0;
+    } catch {
+      estimatedSize = 0;
+    }
+
     this.cache.set(k, {
       value,
       createdAt: Date.now(),
@@ -64,8 +83,13 @@ class GenerationCache {
     return this.cache.delete(this.normalizeKey(key));
   }
 
-  recordHit(): void { this.hits++; }
-  recordMiss(): void { this.misses++; }
+  recordHit(): void {
+    this.hits++;
+  }
+
+  recordMiss(): void {
+    this.misses++;
+  }
 
   getStats(): { size: number; hitRate: number; hits: number; misses: number; evictions: number } {
     const total = this.hits + this.misses;
@@ -87,13 +111,19 @@ class GenerationCache {
 
   getMemoryUsage(): number {
     let total = 0;
-    for (const entry of this.cache.values()) total += entry.size;
+    for (const entry of this.cache.values()) {
+      total += entry.size;
+    }
     return total;
   }
 
   private normalizeKey(key: string | Record<string, unknown>): string {
     if (typeof key === 'string') return key;
-    try { return JSON.stringify(key); } catch { return String(key); }
+    try {
+      return JSON.stringify(key);
+    } catch {
+      return String(key);
+    }
   }
 
   private evictLRU(): void {
@@ -112,9 +142,18 @@ class GenerationCache {
   }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// EXPORTS — used by SOTAContentGenerationEngine, SERPAnalyzer, and others
+// ─────────────────────────────────────────────────────────────────────────────
+
 export const generationCache = new GenerationCache({
   maxSize: 100,
-  defaultTTLMs: 30 * 60 * 1000,
+  defaultTTLMs: 30 * 60 * 1000, // 30 min
+});
+
+export const serpCache = new GenerationCache({
+  maxSize: 50,
+  defaultTTLMs: 15 * 60 * 1000, // 15 min for SERP data
 });
 
 export default GenerationCache;

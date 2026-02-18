@@ -622,16 +622,16 @@ export class EnterpriseContentOrchestrator {
   // NEURONWRITER INITIALIZATION & POLLING
   // ─────────────────────────────────────────────────────────────────────────
 
-  private async maybeInitNeuronWriter(
+private async maybeInitNeuronWriter(
     keyword: string,
     options: GenerationOptions
-  ): Promise<NeuronBundle | null> {
+): Promise<NeuronBundle | null> {
     const apiKey = this.config.neuronWriterApiKey?.trim();
     const projectId = this.config.neuronWriterProjectId?.trim();
 
     if (!apiKey || !projectId) {
-      this.log(`NeuronWriter: SKIPPED — API key: ${apiKey ? 'present (' + apiKey.length + ' chars)' : 'MISSING'}, Project ID: ${projectId ? 'present' : 'MISSING'}`);
-      return null;
+        this.log(`NeuronWriter: SKIPPED — API key: ${apiKey ? 'present' : 'MISSING'}, Project ID: ${projectId ? 'present' : 'MISSING'}`);
+        return null;
     }
 
     const service = createNeuronWriterService(apiKey);
@@ -639,13 +639,26 @@ export class EnterpriseContentOrchestrator {
 
     this.log('NeuronWriter: Initializing integration...');
 
+    // ── NEW: Normalize the keyword for NeuronWriter ──────────────
+    // Converts slugs like "best-running-shoes-2026" → "best running shoes"
+    const nwKeyword = keyword
+        .replace(/[-_]+/g, ' ')          // hyphens/underscores → spaces
+        .replace(/\b\d{4}\b/g, '')        // remove standalone years
+        .replace(/\s+/g, ' ')             // collapse whitespace
+        .trim();
+
+    if (nwKeyword !== keyword) {
+        this.log(`NeuronWriter: Normalized keyword "${keyword}" → "${nwKeyword}"`);
+    }
+    // ─────────────────────────────────────────────────────────────
+
     let queryId = queryIdFromOptions;
 
     // Step 1: Try to find existing ready query
     if (!queryId) {
-      this.log(`NeuronWriter: Searching for existing query matching "${keyword}"...`);
-      try {
-        const searchResult = await service.findQueryByKeyword(projectId, keyword);
+        this.log(`NeuronWriter: Searching for existing query matching "${nwKeyword}"...`);
+        try {
+            const searchResult = await service.findQueryByKeyword(projectId, nwKeyword);
 
         if (searchResult.success && searchResult.query && searchResult.query.status === 'ready') {
           const tempQueryId = searchResult.query.id;

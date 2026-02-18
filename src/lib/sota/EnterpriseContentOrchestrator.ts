@@ -1271,7 +1271,7 @@ Output ONLY the HTML paragraphs, nothing else.`;
     return { content: stripped, references: match[0] };
   }
 
-  private ensureReferencesSection(
+    private ensureReferencesSection(
     html: string,
     refs: Reference[],
     serp: SERPAnalysis
@@ -1313,9 +1313,8 @@ Output ONLY the HTML paragraphs, nothing else.`;
 
     let finalItems = Array.from(dedup.values());
     finalItems.sort((a, b) => {
-      const scoreA = this.getReferenceAuthorityScore(a.domain, a.type);
-      const scoreB = this.getReferenceAuthorityScore(b.domain, b.type);
-      return scoreB - scoreA;
+      return this.getReferenceAuthorityScore(b.domain, b.type) -
+             this.getReferenceAuthorityScore(a.domain, a.type);
     });
     finalItems = finalItems.slice(0, 12);
 
@@ -1323,15 +1322,34 @@ Output ONLY the HTML paragraphs, nothing else.`;
       this.warn('No references available to append');
       return html;
     }
-    if (finalItems.length < 8) {
-      this.warn(`Only ${finalItems.length} references available (target: 8-12)`);
-    }
 
-    const block = `<!-- SOTA References Section -->
-<div style="margin-top:60px;padding-top:40px;border-top:2px solid #e5e7eb">
-<h2 style="color:#1f2937;font-size:28px;font-weight:800;margin-bottom:24px;padding-bottom:12px;border-bottom:3px solid #10b981">
+    const listItems = finalItems
+      .map(
+        (ref, i) =>
+          `<li style="margin:0 0 10px 0;padding-left:4px;line-height:1.6">` +
+          `<span style="color:#6b7280;font-size:13px;margin-right:8px">[${i + 1}]</span>` +
+          `<a href="${this.escapeHtml(ref.url)}" target="_blank" rel="nofollow noopener" ` +
+          `style="color:#059669;text-decoration:underline;font-size:15px">` +
+          `${this.escapeHtml(ref.title)}</a>` +
+          `<span style="color:#9ca3af;font-size:13px;margin-left:8px">(${this.escapeHtml(ref.domain)})</span>` +
+          `</li>`
+      )
+      .join('\n');
 
-    private getReferenceAuthorityScore(domain: string, type: string): number {
+    const block =
+      `\n<!-- SOTA References Section -->\n` +
+      `<div style="margin-top:60px;padding-top:40px;border-top:2px solid #e5e7eb">\n` +
+      `  <h2 style="color:#1f2937;font-size:24px;font-weight:800;margin-bottom:20px;` +
+      `padding-bottom:10px;border-bottom:2px solid #10b981">Sources &amp; References</h2>\n` +
+      `  <ol style="margin:0;padding-left:20px;list-style:none">\n` +
+      `    ${listItems}\n` +
+      `  </ol>\n` +
+      `</div>\n`;
+
+    return html + block;
+  }
+
+  private getReferenceAuthorityScore(domain: string, type: string): number {
     if (domain.endsWith('.gov')) return 100;
     if (domain.endsWith('.edu')) return 95;
     if (domain.endsWith('.org')) return 80;

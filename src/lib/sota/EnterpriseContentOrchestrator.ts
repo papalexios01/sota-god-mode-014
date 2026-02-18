@@ -1632,7 +1632,7 @@ Return the COMPLETE article with humanized voice. Preserve ALL HTML structure ex
         maxTokens: Math.min(32768, Math.max(8192, Math.ceil(content.length / 2))),
       });
 
-      if (result.content && result.content.trim().length > content.length * 0.90) {
+      if (result.content && result.content.trim().length > content.length * 0.70) {
         this.log('Humanization pass complete — content rewritten for natural voice');
         return result.content.trim();
       }

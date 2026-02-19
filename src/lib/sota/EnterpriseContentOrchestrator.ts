@@ -99,7 +99,7 @@ interface OrchestratorConfig {
   logoUrl?: string;
   authorName: string;
   authorCredentials?: string;
-  sitePages?: { url: string; title: string; keywords?: string }[];
+  sitePages?: { url: string; title: string; keywords?: string[] }[];
   targetCountry?: string;
   useConsensus?: boolean;
   primaryModel?: AIModel;
@@ -2085,6 +2085,8 @@ Return the COMPLETE article with humanized voice. Preserve ALL HTML structure ex
       eeat: 75,
       uniqueness: 75,
       factAccuracy: 75,
+                  passed: false,
+        improvements: [],
     };
     let eeatScore = {
       overall: 75,

@@ -231,4 +231,6 @@ export interface PostProcessingResult {
   violations: WallOfTextViolation[];
   /** Whether the processor modified the content. */
   wasModified: boolean;
+    /** Number of visual-break elements injected. */
+  elementsInjected: number;
 }

@@ -129,6 +129,8 @@ export interface AppConfig {
 
 interface OptimizerStore {
   // Navigation
+  showOptimizer: boolean;
+  setShowOptimizer: (show: boolean) => void;
   currentStep: number;
   setCurrentStep: (step: number) => void;
 
@@ -285,6 +287,8 @@ export const useOptimizerStore = create<OptimizerStore>()(
   persist(
     (set) => ({
       // Navigation
+      showOptimizer: false,
+      setShowOptimizer: (show) => set({ showOptimizer: show }),
       currentStep: 1,
       setCurrentStep: (step) => set({ currentStep: step }),
 

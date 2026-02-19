@@ -134,6 +134,10 @@ export function ContentViewerPanel({
     });
   }, [content]);
 
+  // ─── Effective display content (edited or original) ────────────────
+  // IMPORTANT: Must be declared BEFORE neuronLiveScore which references it.
+  const displayContent = isEditorDirty ? editedContent : content;
+
   // Derive effective NeuronWriter data — fallback to generatedContent.neuronWriterAnalysis if prop is null
   const effectiveNeuronData = useMemo(() => {
     if (neuronData) return neuronData;
@@ -372,10 +376,6 @@ export function ContentViewerPanel({
     { id: 'schema', label: 'Schema', icon: <Shield className="w-4 h-4" /> },
     { id: 'neuron', label: 'NeuronWriter', icon: <Brain className="w-4 h-4" />, badge: neuronTermCount || undefined },
   ];
-
-  // ─── Effective display content (edited or original) ────────────────
-
-  const displayContent = isEditorDirty ? editedContent : content;
 
   return createPortal(
     <div className={cn(

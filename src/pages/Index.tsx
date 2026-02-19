@@ -1,6 +1,6 @@
-import { useState } from "react";
 import { Zap, Sparkles, LayoutGrid, Shield } from "lucide-react";
 import { OptimizerDashboard } from "@/components/optimizer/OptimizerDashboard";
+import { useOptimizerStore } from "@/lib/store";
 
 const features = [
   {
@@ -26,9 +26,17 @@ const features = [
 ];
 
 const Index = () => {
-  const [showOptimizer, setShowOptimizer] = useState(false);
+  // ✅ FIX: Use persisted store instead of ephemeral useState.
+  // Previously, showOptimizer was useState(false) which reset on every
+  // component re-mount (e.g., after error boundary, hot reload, or navigation).
+  // This caused the "eye icon takes me to landing page" bug.
+  const { showOptimizer: storeShowOptimizer, setShowOptimizer, contentItems } = useOptimizerStore();
 
-  if (showOptimizer) {
+  // Derive: if user has any content items OR has previously entered the optimizer,
+  // always show it. This survives page refreshes, error boundaries, and re-mounts.
+  const shouldShowOptimizer = storeShowOptimizer || contentItems.length > 0;
+
+  if (shouldShowOptimizer) {
     return <OptimizerDashboard />;
   }
 

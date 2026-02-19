@@ -97,11 +97,15 @@ export function ContentViewerPanel({
 
   const { publish, isPublishing, publishResult, clearResult, isConfigured } = useWordPressPublish();
 
-  if (!item) return null;
+  // ─── Editor State (MUST be declared before any usage or early return) ────
+  const [editedContent, setEditedContent] = useState<string>('');
+  const [isEditorDirty, setIsEditorDirty] = useState(false);
+  const [editorHistory, setEditorHistory] = useState<string[]>([]);
+  const [historyIndex, setHistoryIndex] = useState(-1);
 
-  const content = item.content || '';
+  const content = item?.content || '';
   const hasContent = content.length > 0;
-  const wordCount = item.wordCount || content.split(/\s+/).filter(Boolean).length;
+  const wordCount = item?.wordCount || content.split(/\s+/).filter(Boolean).length;
 
   const sourcePathname = useMemo(() => getPathnameFromUrl(item.url), [item.url]);
   const sourceSlug = useMemo(() => getWordPressPostSlugFromUrl(item.url), [item.url]);
@@ -135,7 +139,6 @@ export function ContentViewerPanel({
   }, [content]);
 
   // ─── Effective display content (edited or original) ────────────────
-  // IMPORTANT: Must be declared BEFORE neuronLiveScore which references it.
   const displayContent = isEditorDirty ? editedContent : content;
 
   // Derive effective NeuronWriter data — fallback to generatedContent.neuronWriterAnalysis if prop is null
@@ -213,12 +216,7 @@ export function ContentViewerPanel({
     URL.revokeObjectURL(url);
   };
 
-  // ─── Editor State ──────────────────────────────────────────────────
-
-  const [editedContent, setEditedContent] = useState<string>('');
-  const [isEditorDirty, setIsEditorDirty] = useState(false);
-  const [editorHistory, setEditorHistory] = useState<string[]>([]);
-  const [historyIndex, setHistoryIndex] = useState(-1);
+  // ─── Editor State (hooks declared above, near line 100) ────────────
 
   useEffect(() => {
     if (!item?.id) return;
@@ -377,6 +375,9 @@ export function ContentViewerPanel({
     { id: 'neuron', label: 'NeuronWriter', icon: <Brain className="w-4 h-4" />, badge: neuronTermCount || undefined },
   ];
 
+  // ─── Early return AFTER all hooks ─────────────────────────────────
+  if (!item) return null;
+
   return createPortal(
     <div className={cn(
       "fixed bg-black/90 backdrop-blur-xl z-[60] flex flex-col transition-all duration-300",
@@ -511,7 +512,7 @@ export function ContentViewerPanel({
                   </div>
                 </div>
 
-                <div className="bg-white rounded-2xl shadow-2xl overflow-hidden max-w-4xl mx-auto ring-8 ring-black/20">
+                <div className="bg-white rounded-2xl shadow-2xl overflow-hidden max-w-5xl mx-auto ring-8 ring-black/20">
                   <div className="bg-gray-100 px-4 py-3 text-sm text-gray-500 border-b flex items-center gap-4">
                     <div className="flex gap-1.5">
                       <div className="w-3 h-3 rounded-full bg-red-400 border border-red-500/20" />
@@ -527,7 +528,7 @@ export function ContentViewerPanel({
                     __html: `
                     /* ═══ BASE CONTAINER ═══ */
                     .wp-preview-content {
-                      max-width: 780px;
+                      max-width: 960px;
                       margin: 0 auto;
                       scroll-behavior: smooth;
                     }

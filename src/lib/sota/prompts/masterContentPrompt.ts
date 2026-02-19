@@ -381,6 +381,16 @@ VISUAL ELEMENTS (distributed throughout):
 • End with a direct challenge, a provocative question, or a "here's what to do Monday morning" call to action
 • Do NOT use "In conclusion", "To sum up", "To wrap up", or ANY closing cliché
 • Write it like the last thing you'd say to someone before they leave your office
+
+  FAQ SECTION (MANDATORY — after closing, before references):
+• Add a dedicated <h2>Frequently Asked Questions</h2> section as the LAST H2 in the article
+• Include 5-8 FAQs using People Also Ask questions plus your own expert questions
+• Each FAQ uses an <h3> for the question and a <p> for the answer (2-4 sentences each)
+• Answers must be direct, specific, and actionable — not generic filler
+• This section helps capture featured snippets and PAA boxes in Google
+• Use this exact HTML structure for each FAQ:
+  <h3>[Question]</h3>
+  <p>[Direct, specific answer in 2-4 sentences. Include at least one number or specific detail.]</p>
     </content_architecture>
 
     <seo_integration>
@@ -610,7 +620,7 @@ CRITICAL — NeuronWriter score target: 90%+. Every term matters.
     if (serpData.peopleAlsoAsk.length > 0) {
       sections.push(`<people_also_ask>`);
       sections.push(
-        `Answer ALL of these questions naturally within relevant sections (do NOT create a separate FAQ section — integrate the answers into your H2 sections):`,
+        `Answer ALL of these questions. Use them as the basis for a DEDICATED FAQ section at the end of the article (as an H2 "Frequently Asked Questions" section with H3 sub-questions). Additionally, integrate the most important answers naturally within relevant H2 body sections:`,
       );
       serpData.peopleAlsoAsk.slice(0, 8).forEach((q) => {
         sections.push(`  • ${q}`);
@@ -706,6 +716,7 @@ CRITICAL — NeuronWriter score target: 90%+. Every term matters.
     `• Every paragraph must pass the "So What?" test — if a reader can say "So what?" after reading it, rewrite it with specifics`,
   );
   sections.push(`• The pre-TOC section alone should be 300-500 words of high-impact prose`);
+  sections.push(`• MANDATORY: End the article with an H2 "Frequently Asked Questions" section containing 5-8 FAQs as H3 sub-questions with direct, specific answers`);
   sections.push(`• Make this the single best article on "${primaryKeyword}" on the entire internet`);
   sections.push(`</generate>`);
 

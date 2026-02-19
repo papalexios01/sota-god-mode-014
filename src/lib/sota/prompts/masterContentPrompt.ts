@@ -496,6 +496,20 @@ MOBILE RESPONSIVENESS (CRITICAL):
 • Use 5 - 8 of these styled elements per article, distributed across sections
 • Minimum: 1 key takeaway, 1 pro tip or warning, 1 table or stat box, 1 summary or quote
 • Never place two styled boxes back - to - back without a prose paragraph between them
+
+UNIFIED WIDTH (CRITICAL — prevents content overflow):
+• ALL styled div elements, tables, blockquotes, figures, and iframes MUST include: max-width: 100%; box-sizing: border-box;
+• NEVER set a fixed pixel width on any styled element — always use percentage widths or max-width
+• Every styled box must fit perfectly within the parent container — no horizontal scroll, no overflow
+• Tables must be wrapped in a div with overflow-x: auto to handle mobile gracefully
+• All padding values in styled boxes must be reasonable (20-32px) — never exceed the container bounds
+
+CONSISTENT SPACING (CRITICAL — creates premium reading rhythm):
+• ALL styled boxes use margin: 32px 0 — creating even vertical breathing room
+• ALL headings use consistent top margin (H2: 56px, H3: 44px, H4: 36px) and bottom margin (H2: 24px, H3: 18px, H4: 14px)
+• Paragraphs always use margin: 0 0 22px — no exceptions
+• Lists use margin: 16px 0 28px — consistent with surrounding prose
+• Never double-up margins by placing two elements with top margins adjacent — this creates excessive gaps
     </html_design_system>`;
 }
 

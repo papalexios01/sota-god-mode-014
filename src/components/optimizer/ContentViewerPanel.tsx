@@ -154,14 +154,17 @@ export function ContentViewerPanel({
   // but NeuronWriterTab expects { missing, underused, optimal }.
   const neuronLiveScore = useMemo(() => {
     if (!effectiveNeuronData) return null;
-    const raw = scoreContentAgainstNeuron(displayContent || content, [...(effectiveNeuronData.terms || []), ...(effectiveNeuronData.termsExtended || []), ...(effectiveNeuronData.basicKeywords || []), ...(effectiveNeuronData.extendedKeywords || [])]);
-    if (!raw) return null;
 
-    // Build term lists that the UI can render
+    // Build combined term list from all possible field names
     const allTerms = [
       ...(effectiveNeuronData.basicKeywords || effectiveNeuronData.terms || []),
       ...(effectiveNeuronData.extendedKeywords || effectiveNeuronData.termsExtended || []),
     ];
+
+    // If no terms at all, still show the panel with score=0 rather than infinite spinner
+    const rawScore = scoreContentAgainstNeuron(displayContent || content, allTerms);
+    // FIX: `!raw` was true for score=0, hiding the panel forever. Use explicit numeric check.
+    const score = typeof rawScore === 'number' ? rawScore : 0;
 
     const contentLower = (displayContent || content).replace(/<[^>]*>/g, ' ').toLowerCase();
 
@@ -173,7 +176,7 @@ export function ContentViewerPanel({
       const termStr = t.term || (t as any).name || '';
       const term = termStr.toLowerCase().trim();
       if (!term) continue;
-      const regex = new RegExp(term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
+      const regex = new RegExp(term.replace(/[.*+?^${}()|[\\]\\]/g, '\\$&'), 'gi');
       const count = (contentLower.match(regex) || []).length;
       const recommended = t.recommended || t.frequency || 1;
 
@@ -190,12 +193,7 @@ export function ContentViewerPanel({
       }
     }
 
-    return {
-      score: raw,
-      missing,
-      underused,
-      optimal,
-    };
+    return { score, missing, underused, optimal };
   }, [displayContent, content, effectiveNeuronData]);
 
 

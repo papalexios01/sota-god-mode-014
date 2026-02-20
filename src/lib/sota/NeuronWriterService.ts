@@ -137,7 +137,7 @@ export class NeuronWriterService {
             if (stateConfig?.supabaseUrl) supabaseUrl = stateConfig.supabaseUrl;
             if (stateConfig?.supabaseAnonKey) supabaseAnonKey = stateConfig.supabaseAnonKey;
           }
-        } catch (e) {}
+        } catch (e) { }
       }
 
       this.config = {
@@ -163,15 +163,17 @@ export class NeuronWriterService {
    * Resolve the proxy URL. Priority:
    *   1. customProxyUrl (explicit override)
    *   2. Supabase Edge Function (if supabaseUrl is configured)
-   *   3. Local Express server at /api/neuronwriter-proxy (dev fallback)
+   *   3. /api/neuronwriter — Vercel serverless function (api/neuronwriter.ts)
+   *      AND local Express server (Vite proxies /api/* to localhost:3001)
    */
   private resolveProxyUrl(): string {
     if (this.config.customProxyUrl) return this.config.customProxyUrl;
     if (this.config.supabaseUrl && this.config.supabaseUrl.trim().length > 0) {
       return `${this.config.supabaseUrl}/functions/v1/neuronwriter-proxy`;
     }
-    // Fallback: local Express server proxy (Vite forwards /api/* to localhost:3001)
-    return '/api/neuronwriter-proxy';
+    // Works on Vercel (api/neuronwriter.ts) AND local dev (Express at /api/neuronwriter-proxy
+    // is also registered, but /api/neuronwriter is the canonical path)
+    return '/api/neuronwriter';
   }
 
   private async callProxy(endpoint: string, payload: any = {}): Promise<NWApiResponse> {
@@ -183,7 +185,7 @@ export class NeuronWriterService {
       try {
         const url = this.resolveProxyUrl();
         this.diag(`callProxy → ${url} | endpoint: ${cleanEndpoint} (attempt ${attempt + 1}/${MAX_RETRIES})`);
-        
+
         const headers: Record<string, string> = {
           'Content-Type': 'application/json',
         };
@@ -212,12 +214,12 @@ export class NeuronWriterService {
           headers,
           body: JSON.stringify(requestBody)
         });
-        
+
         if (!response.ok) {
-           const errorText = await response.text();
-           throw new Error(`HTTP ${response.status}: ${errorText}`);
+          const errorText = await response.text();
+          throw new Error(`HTTP ${response.status}: ${errorText}`);
         }
-        
+
         const result = await response.json();
 
         // The server-side proxy wraps the response in { success, data };
@@ -254,7 +256,7 @@ export class NeuronWriterService {
     const norm = this.normalize(keyword);
     const sessionHit = SESSION_DEDUP_MAP.get(norm);
     if (sessionHit) return { success: true, query: sessionHit };
-    
+
     const persistentHit = findInPersistentCache(norm);
     if (persistentHit) return { success: true, query: persistentHit };
 

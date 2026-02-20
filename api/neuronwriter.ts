@@ -40,7 +40,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     const cleanApiKey = finalApiKey.trim();
-    const url = `${NEURON_API_BASE}${endpoint}`;
+    const cleanEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
+    const url = `${NEURON_API_BASE}${cleanEndpoint}`;
 
     let timeoutMs = 30000;
     if (endpoint === "/new-query") timeoutMs = 55000;

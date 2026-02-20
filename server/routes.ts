@@ -252,7 +252,9 @@ export function registerRoutes(app: Express): void {
   }
 
   // ─── NeuronWriter Proxy (with Circuit Breaker) ─────────────────
-  app.post("/api/neuronwriter-proxy", async (req: Request, res: Response) => {
+  // Register on both paths: /api/neuronwriter (canonical, matches Vercel function)
+  // and /api/neuronwriter-proxy (legacy)
+  const neuronWriterHandler = async (req: Request, res: Response) => {
     try {
       const { endpoint, method = "POST", apiKey, body: requestBody } = req.body;
       const apiKeyFromHeader = (req.headers["x-neuronwriter-key"] || req.headers["x-nw-api-key"]) as string | undefined;
@@ -324,7 +326,9 @@ export function registerRoutes(app: Express): void {
         type: isCircuitOpen ? "circuit_open" : isTimeout ? "timeout" : "network_error",
       });
     }
-  });
+  };
+  app.post("/api/neuronwriter", neuronWriterHandler);
+  app.post("/api/neuronwriter-proxy", neuronWriterHandler);
 
   // ─── Sitemap Fetch (with caching) ──────────────────────────────
   app.all("/api/fetch-sitemap", async (req: Request, res: Response) => {

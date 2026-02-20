@@ -39,7 +39,8 @@ async function makeNeuronRequest(
   timeoutMs: number = 30000
 ): Promise<Response> {
   const cleanApiKey = apiKey.trim();
-  const url = `${NEURON_API_BASE}${endpoint}`;
+  const cleanEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
+  const url = `${NEURON_API_BASE}${cleanEndpoint}`;
 
   console.log(`[NeuronWriter Proxy] ${method} ${endpoint}`);
 

@@ -1,6 +1,8 @@
 // src/lib/sota/NeuronWriterService.ts
 // ═══════════════════════════════════════════════════════════════════════════════
-// NEURONWRITER SERVICE v7.2 — ENTERPRISE RESILIENCE & AUTO-HEALING ENGINE
+// NEURONWRITER SERVICE v7.5 — ENTERPRISE RESILIENCE & AUTO-HEALING ENGINE
+// FIXED: Adjusted the request payload format to match the Supabase Edge Function.
+//        The Edge Function expects the body to contain `{ endpoint: string, body?: any }`
 // ═══════════════════════════════════════════════════════════════════════════════
 
 export interface NeuronWriterProxyConfig {
@@ -64,7 +66,7 @@ export interface NeuronWriterProject {
 
 const MAX_RETRIES = 3;
 const INITIAL_RETRY_DELAY_MS = 1000;
-const PERSISTENT_CACHE_KEY = 'sota-nw-dedup-cache-v7.2';
+const PERSISTENT_CACHE_KEY = 'sota-nw-dedup-cache-v7.5';
 
 function levenshteinDistance(a: string, b: string): number {
   const m = a.length, n = b.length;
@@ -118,7 +120,37 @@ function findInPersistentCache(keyword: string): NeuronWriterQuery | undefined {
 }
 
 export class NeuronWriterService {
-  constructor(private config: NeuronWriterProxyConfig) {}
+  private config: NeuronWriterProxyConfig;
+
+  constructor(configOrApiKey: NeuronWriterProxyConfig | string) {
+    if (typeof configOrApiKey === 'string') {
+      let supabaseUrl = typeof import.meta !== 'undefined' ? (import.meta.env?.VITE_SUPABASE_URL ?? '') : '';
+      let supabaseAnonKey = typeof import.meta !== 'undefined' ? (import.meta.env?.VITE_SUPABASE_ANON_KEY ?? '') : '';
+
+      // Fallback: Attempt to load from the Zustand persisted store
+      if (typeof localStorage !== 'undefined') {
+        try {
+          const stored = localStorage.getItem('wp-optimizer-storage');
+          if (stored) {
+            const parsed = JSON.parse(stored);
+            const stateConfig = parsed?.state?.config;
+            if (stateConfig?.supabaseUrl) supabaseUrl = stateConfig.supabaseUrl;
+            if (stateConfig?.supabaseAnonKey) supabaseAnonKey = stateConfig.supabaseAnonKey;
+          }
+        } catch (e) {
+          // Ignore parse errors
+        }
+      }
+
+      this.config = {
+        neuronWriterApiKey: configOrApiKey,
+        supabaseUrl,
+        supabaseAnonKey,
+      };
+    } else {
+      this.config = configOrApiKey;
+    }
+  }
 
   private diag(msg: string) {
     console.log(`[NeuronWriter] ${msg}`);
@@ -129,7 +161,8 @@ export class NeuronWriterService {
     return new Promise(resolve => setTimeout(resolve, ms));
   }
 
-  private async callProxy(endpoint: string, payload: any): Promise<NWApiResponse> {
+  // The proxy edge function expects a JSON body with an "endpoint" field
+  private async callProxy(endpoint: string, payload: any = {}): Promise<NWApiResponse> {
     let lastError = '';
     for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
       try {
@@ -138,20 +171,32 @@ export class NeuronWriterService {
         const headers: Record<string, string> = {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${this.config.supabaseAnonKey}`,
-          'X-NW-Endpoint': endpoint
         };
-        
-        // Inject the API key into the headers for the proxy
-        if (this.config.neuronWriterApiKey) {
-          headers['X-NW-Api-Key'] = this.config.neuronWriterApiKey;
+
+        // We wrap the payload in the structure the Edge Function expects:
+        // { endpoint: "/projects", method: "GET", body: {...} }
+        let requestBody: any = {
+          endpoint: endpoint, // e.g. "/projects"
+          method: payload.method || 'POST',
+          body: payload.body || {},
+        };
+
+        // If it's a GET request, the edge function will forward it. GET requests should not have a body.
+        if (requestBody.method === 'GET') {
+          delete requestBody.body;
         }
 
         const response = await fetch(url, {
-          method: 'POST',
+          method: 'POST', // We always POST to our proxy
           headers,
-          body: JSON.stringify(payload)
+          body: JSON.stringify(requestBody)
         });
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        
+        if (!response.ok) {
+           const errorText = await response.text();
+           throw new Error(`HTTP ${response.status}: ${errorText}`);
+        }
+        
         const result = await response.json();
         return { success: true, data: result };
       } catch (err: any) {
@@ -168,7 +213,11 @@ export class NeuronWriterService {
 
   async listProjects(): Promise<{ success: boolean; projects?: NeuronWriterProject[]; error?: string }> {
     this.diag('Fetching projects list...');
-    const res = await this.callProxy('list-projects', {});
+    
+    // The edge function prepends the base URL: https://app.neuronwriter.com/neuron-api/0.5/writer
+    // So the endpoint we pass should be the path, e.g., "/projects"
+    const res = await this.callProxy('/projects', { method: 'GET' });
+    
     if (!res.success) return res;
     return { success: true, projects: res.data?.projects || res.data || [] };
   }
@@ -182,7 +231,7 @@ export class NeuronWriterService {
     if (persistentHit) return { success: true, query: persistentHit };
 
     this.diag(`Searching project ${projectId} for "${keyword}"...`);
-    const res = await this.callProxy('list-queries', { project: projectId });
+    const res = await this.callProxy(`/projects/${projectId}/queries`, { method: 'GET' });
     if (!res.success) return res;
 
     const list = Array.isArray(res.data) ? res.data : (res.data?.queries || []);
@@ -200,7 +249,8 @@ export class NeuronWriterService {
 
   async getQueryAnalysis(queryId: string): Promise<{ success: boolean; analysis?: NeuronWriterAnalysis; error?: string }> {
     this.diag(`Fetching analysis ${queryId}...`);
-    const res = await this.callProxy('get-query', { query: queryId });
+    // Example: GET /queries/{id}
+    const res = await this.callProxy(`/queries/${queryId}`, { method: 'GET' });
     if (!res.success) return res;
 
     const data = res.data?.data || res.data;
@@ -259,13 +309,6 @@ export class NeuronWriterService {
 }
 
 export function createNeuronWriterService(apiKeyOrConfig: string | NeuronWriterProxyConfig) {
-  if (typeof apiKeyOrConfig === 'string') {
-    return new NeuronWriterService({
-      neuronWriterApiKey: apiKeyOrConfig,
-      supabaseUrl: import.meta.env.VITE_SUPABASE_URL,
-      supabaseAnonKey: import.meta.env.VITE_SUPABASE_ANON_KEY
-    });
-  }
   return new NeuronWriterService(apiKeyOrConfig);
 }
 

@@ -1,6 +1,6 @@
 // src/lib/sota/NeuronWriterService.ts
 // ═══════════════════════════════════════════════════════════════════════════════
-// NEURONWRITER SERVICE v7.0 — SOTA RESILIENT PARSING & AUTO-HEAL
+// NEURONWRITER SERVICE v7.1 — SOTA RESILIENT PARSING & AUTO-HEAL
 // ═══════════════════════════════════════════════════════════════════════════════
 
 export interface NeuronWriterProxyConfig {
@@ -65,15 +65,6 @@ export interface NeuronWriterQuery {
   updated_at?: string;
 }
 
-export interface NeuronWriterProject {
-  id: string;
-  name: string;
-  language?: string;
-  engine?: string;
-  queries_count?: number;
-  created_at?: string;
-}
-
 const MAX_RETRIES = 3;
 const INITIAL_RETRY_DELAY_MS = 1000;
 const PERSISTENT_CACHE_KEY = 'sota-nw-dedup-cache-v7';
@@ -112,44 +103,28 @@ function wordOrderIndependentSimilarity(a: string, b: string): number {
 }
 
 // ── Persistent Cache ───────────────────────────────────────────────────────
-
-interface PersistentCacheEntry {
-  queryId: string;
-  keyword: string;
-  normalizedKeyword: string;
-  createdAt: number;
-  status: string;
-}
-
 const SESSION_DEDUP_MAP = new Map<string, any>();
 
-function loadPersistentCache(): PersistentCacheEntry[] {
+function loadPersistentCache(): any[] {
   try {
     const raw = localStorage.getItem(PERSISTENT_CACHE_KEY);
     if (!raw) return [];
-    const entries: PersistentCacheEntry[] = JSON.parse(raw);
+    const entries: any[] = JSON.parse(raw);
     const now = Date.now();
     return entries.filter(e => now - e.createdAt < PERSISTENT_CACHE_MAX_AGE_MS);
   } catch { return []; }
 }
 
-function savePersistentCache(entries: PersistentCacheEntry[]): void {
+function savePersistentCache(entries: any[]): void {
   try { localStorage.setItem(PERSISTENT_CACHE_KEY, JSON.stringify(entries)); } catch {}
 }
 
-function addToPersistentCache(entry: PersistentCacheEntry): void {
-  const cache = loadPersistentCache();
-  const filtered = cache.filter(e => e.normalizedKeyword !== entry.normalizedKeyword);
-  filtered.push(entry);
-  savePersistentCache(filtered);
-}
-
-function findInPersistentCache(normalizedKeyword: string): PersistentCacheEntry | null {
+function findInPersistentCache(normalizedKeyword: string): any | null {
   const cache = loadPersistentCache();
   const exact = cache.find(e => e.normalizedKeyword === normalizedKeyword);
   if (exact) return exact;
   
-  let bestMatch: PersistentCacheEntry | null = null;
+  let bestMatch: any | null = null;
   let bestSimilarity = 0;
   for (const entry of cache) {
     const sim = Math.max(
@@ -184,7 +159,12 @@ export class NeuronWriterService {
   }
 
   static cleanKeyword(raw: string): string {
-    return raw.toLowerCase().replace(/[-_]+/g, ' ').replace(/\b\d{4}\b/g, '').replace(/[^a-z0-9\s]/g, '').replace(/\s+/g, ' ').trim();
+    return raw.toLowerCase()
+      .replace(/[-_]+/g, ' ')
+      .replace(/\b\d{4}\b/g, '')
+      .replace(/[^a-z0-9\s]/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
   }
 
   private normalize(s: string): string { return NeuronWriterService.cleanKeyword(s); }
@@ -227,20 +207,6 @@ export class NeuronWriterService {
     return { success: false, error: lastError };
   }
 
-  async listProjects() {
-    const res = await this.callProxy('/list-projects');
-    if (!res.success) return res;
-    const data = res.data as any;
-    const list = Array.isArray(data) ? data : data?.projects || [];
-    return {
-      success: true,
-      projects: list.map((p: any) => ({
-        id: p.project || p.id,
-        name: p.name || p.project || 'Unnamed'
-      })).filter((p: any) => p.id)
-    };
-  }
-
   async findQueryByKeyword(projectId: string, keyword: string) {
     const norm = this.normalize(keyword);
     const sessionHit = SESSION_DEDUP_MAP.get(norm);
@@ -249,8 +215,10 @@ export class NeuronWriterService {
     const persistentHit = findInPersistentCache(norm);
     if (persistentHit) return { success: true, query: persistentHit };
 
+    this.diag(`Searching project ${projectId} for keyword "${keyword}"...`);
     const res = await this.callProxy('/list-queries', { project: projectId });
     if (!res.success) return res;
+
     const list = Array.isArray(res.data) ? res.data : (res.data as any)?.queries || [];
     
     for (const q of list) {
@@ -264,31 +232,27 @@ export class NeuronWriterService {
     return { success: true, query: undefined };
   }
 
-  async createQuery(projectId: string, keyword: string) {
-    const clean = NeuronWriterService.cleanKeyword(keyword);
-    const res = await this.callProxy('/new-query', { project: projectId, keyword: clean });
-    if (!res.success) return res;
-    const id = (res.data as any)?.query || (res.data as any)?.id;
-    if (id) {
-      SESSION_DEDUP_MAP.set(this.normalize(keyword), { id, keyword: clean, status: 'processing' });
-      return { success: true, queryId: id };
-    }
-    return { success: false, error: 'No query ID returned' };
-  }
-
   async getQueryAnalysis(queryId: string): Promise<{ success: boolean; analysis?: NeuronWriterAnalysis; error?: string }> {
     const res = await this.callProxy('/get-query', { query: queryId });
-    if (!res.success) return res;
-    
+    if (!res.success) {
+      this.diag(`Failed to fetch query ${queryId}: ${res.error}`);
+      return res;
+    }
+
     const raw = res.data as any;
+    if (!raw) {
+      this.diag(`Query ${queryId} returned success but empty data payload.`);
+      return { success: false, error: 'Empty data payload' };
+    }
+
     const { basic, extended, entities, h2, h3, recommendations, competitors } = this.normalizePayload(raw);
 
     const analysis: NeuronWriterAnalysis = {
       query_id: queryId,
-      status: raw.status || 'ready',
-      keyword: raw.keyword,
-      content_score: raw.content_score || raw.contentScore || 0,
-      recommended_length: raw.recommended_length || 2500,
+      status: raw.status || (raw.data as any)?.status || 'ready',
+      keyword: raw.keyword || (raw.data as any)?.keyword,
+      content_score: raw.content_score || raw.contentScore || (raw.data as any)?.content_score || 0,
+      recommended_length: raw.recommended_length || (raw.data as any)?.recommended_length || 2500,
       terms: this.parseTerms(basic),
       termsExtended: this.parseTerms(extended),
       basicKeywords: this.parseTerms(basic),
@@ -300,48 +264,58 @@ export class NeuronWriterService {
       competitorData: competitors
     };
 
+    const hasTerms = (analysis.terms?.length || 0) > 0;
+    const hasEntities = (analysis.entities?.length || 0) > 0;
+
+    if (!hasTerms && !hasEntities) {
+      this.diag(`WARNING: Analysis ${queryId} found but no terms/entities parsed. Raw keys: ${Object.keys(raw).join(', ')}`);
+    }
+
     return { success: true, analysis };
   }
 
   private normalizePayload(raw: any) {
     const data = raw?.data ?? raw;
-    const rec = data?.recommendations ?? data?.recommendation ?? {};
-    const kw = data?.keywords ?? rec?.keywords ?? {};
-
+    const rec = data?.recommendations ?? data?.recommendation ?? data?.results?.recommendations ?? {};
+    const kw = data?.keywords ?? rec?.keywords ?? data?.results?.keywords ?? {};
+    
     const firstArr = (...c: any[]) => c.find(a => Array.isArray(a) && a.length) || [];
 
     return {
-      basic: firstArr(data?.basicKeywords, rec?.basicKeywords, data?.terms, rec?.terms, kw?.basic),
-      extended: firstArr(data?.extendedKeywords, rec?.extendedKeywords, data?.termsExtended, rec?.termsExtended, kw?.extended),
-      entities: firstArr(data?.entities, rec?.entities, data?.result?.entities),
-      h2: firstArr(data?.headingsH2, rec?.headingsH2, data?.headings?.h2),
-      h3: firstArr(data?.headingsH3, rec?.headingsH3, data?.headings?.h3),
+      basic: firstArr(data?.basicKeywords, rec?.basicKeywords, data?.terms, rec?.terms, kw?.basic, rec?.basic, data?.results?.terms_basic),
+      extended: firstArr(data?.extendedKeywords, rec?.extendedKeywords, data?.termsExtended, rec?.termsExtended, kw?.extended, rec?.extended, data?.results?.terms_extended),
+      entities: firstArr(data?.entities, rec?.entities, data?.result?.entities, data?.results?.entities),
+      h2: firstArr(data?.headingsH2, rec?.headingsH2, data?.headings?.h2, data?.results?.headings_h2),
+      h3: firstArr(data?.headingsH3, rec?.headingsH3, data?.headings?.h3, data?.results?.headings_h3),
       recommendations: rec,
-      competitors: firstArr(data?.competitors, data?.competitorData, rec?.competitors)
+      competitors: firstArr(data?.competitors, data?.competitorData, rec?.competitors, data?.results?.competitors)
     };
   }
 
   private parseTerms(terms: any[]): NeuronWriterTermData[] {
+    if (!Array.isArray(terms)) return [];
     return terms.map(t => ({
-      term: t.term || t.keyword || String(t),
+      term: t.term || t.keyword || t.name || String(t),
       type: (t.type || 'recommended') as any,
       frequency: t.frequency || t.count || 1,
       weight: t.weight || t.score || 50,
       recommended: t.recommended || t.frequency || 1
-    })).filter(t => t.term);
+    })).filter(t => t.term && t.term.length > 1);
   }
 
   private parseEntities(entities: any[]) {
+    if (!Array.isArray(entities)) return [];
     return entities.map(e => ({
-      entity: e.entity || e.name || String(e),
+      entity: e.entity || e.name || e.term || String(e),
       usage_pc: e.usage_pc || 50,
       frequency: e.frequency || 1
     })).filter(e => e.entity);
   }
 
   private parseHeadings(headings: any[]) {
+    if (!Array.isArray(headings)) return [];
     return headings.map(h => ({
-      text: h.text || h.heading || String(h),
+      text: h.text || h.heading || h.title || String(h),
       usage_pc: h.usage_pc || 50
     })).filter(h => h.text);
   }
@@ -352,13 +326,13 @@ export class NeuronWriterService {
       `Target Score: 90%+ | Rec Length: ${analysis.recommended_length} words`,
       '
 CORE SEO TERMS (MUST USE):',
-      ...terms.slice(0, 40).map((t, i) => `  ${i+1}. "${t.term}" (target: ${t.recommended}x)`),
+      ...terms.slice(0, 50).map((t, i) => ` ${i+1}. "${t.term}" (target: ${t.recommended}x)`),
       '
 ENTITIES:',
-      ...(analysis.entities || []).slice(0, 20).map((e, i) => `  ${i+1}. "${e.entity}"`),
+      ...(analysis.entities || []).slice(0, 25).map((e, i) => ` ${i+1}. "${e.entity}"`),
       '
 RECOMMENDED HEADINGS:',
-      ...(analysis.headingsH2 || []).slice(0, 8).map((h, i) => `  H2: "${h.text}"`),
+      ...(analysis.headingsH2 || []).slice(0, 10).map((h, i) => ` H2: "${h.text}"`),
       '
 STRATEGY:',
       '1. Distribute terms naturally across all sections.',
@@ -385,7 +359,6 @@ export function scoreContentAgainstNeuron(html: string, analysis: NeuronWriterAn
   const underused: string[] = [];
   const optimal: string[] = [];
   let matched = 0;
-
   for (const t of terms) {
     const count = (text.match(new RegExp(t.term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi')) || []).length;
     if (count === 0) missing.push(t.term);
@@ -393,11 +366,14 @@ export function scoreContentAgainstNeuron(html: string, analysis: NeuronWriterAn
     else optimal.push(t.term);
     if (count > 0) matched++;
   }
-
   return {
     score: Math.round((matched / (terms.length || 1)) * 100),
     missing, underused, optimal
   };
+}
+
+export function createNeuronWriterService(apiKey: string, proxyConfig?: NeuronWriterProxyConfig) {
+  return new NeuronWriterService(apiKey, proxyConfig);
 }
 
 export default NeuronWriterService;

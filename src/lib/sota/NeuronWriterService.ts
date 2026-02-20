@@ -57,12 +57,6 @@ export interface NeuronWriterQuery {
   id: string;
   keyword: string;
   status: string;
-  language?: string;
-  engine?: string;
-  source?: string;
-  tags?: string[];
-  created_at?: string;
-  updated_at?: string;
 }
 
 const MAX_RETRIES = 3;
@@ -118,17 +112,12 @@ function findInPersistentCache(keyword: string): NeuronWriterQuery | undefined {
   const cache = getPersistentCache();
   const entry = cache[keyword.toLowerCase().trim()];
   if (!entry) return undefined;
-  // Expire after 7 days
   if (Date.now() - entry.timestamp > 7 * 24 * 60 * 60 * 1000) return undefined;
   return entry.query;
 }
 
 export class NeuronWriterService {
-  private config: NeuronWriterProxyConfig;
-
-  constructor(config: NeuronWriterProxyConfig) {
-    this.config = config;
-  }
+  constructor(private config: NeuronWriterProxyConfig) {}
 
   private diag(msg: string) {
     console.log(`[NeuronWriter] ${msg}`);
@@ -141,11 +130,9 @@ export class NeuronWriterService {
 
   private async callProxy(endpoint: string, payload: any): Promise<NWApiResponse> {
     let lastError = '';
-    
     for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
       try {
         const url = this.config.customProxyUrl || `${this.config.supabaseUrl}/functions/v1/neuronwriter-proxy`;
-        
         const response = await fetch(url, {
           method: 'POST',
           headers: {
@@ -155,23 +142,14 @@ export class NeuronWriterService {
           },
           body: JSON.stringify(payload)
         });
-
-        if (!response.ok) {
-          const errText = await response.text();
-          throw new Error(`HTTP ${response.status}: ${errText}`);
-        }
-
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const result = await response.json();
         return { success: true, data: result };
       } catch (err: any) {
         lastError = err.message;
-        this.diag(`Proxy error (attempt ${attempt + 1}): ${lastError}`);
-        if (attempt < MAX_RETRIES - 1) {
-          await this.sleep(INITIAL_RETRY_DELAY_MS * Math.pow(2, attempt));
-        }
+        if (attempt < MAX_RETRIES - 1) await this.sleep(INITIAL_RETRY_DELAY_MS * Math.pow(2, attempt));
       }
     }
-    
     return { success: false, error: lastError };
   }
 
@@ -179,25 +157,19 @@ export class NeuronWriterService {
     return s.toLowerCase().replace(/[^a-z0-9]/g, '').trim();
   }
 
-  async findOrCreateQuery(projectId: string, keyword: string): Promise<{ success: boolean; query?: NeuronWriterQuery; error?: string }> {
+  async findQueryByKeyword(projectId: string, keyword: string): Promise<{ success: boolean; query?: NeuronWriterQuery; error?: string }> {
     const norm = this.normalize(keyword);
-    
-    // 1. Session Cache
     const sessionHit = SESSION_DEDUP_MAP.get(norm);
     if (sessionHit) return { success: true, query: sessionHit };
-
-    // 2. Persistent Cache
+    
     const persistentHit = findInPersistentCache(norm);
     if (persistentHit) return { success: true, query: persistentHit };
 
-    this.diag(`Searching project ${projectId} for keyword "${keyword}"...`);
-    
+    this.diag(`Searching project ${projectId} for "${keyword}"...`);
     const res = await this.callProxy('list-queries', { project: projectId });
     if (!res.success) return res;
 
-    // Handle different API response shapes
     const list = Array.isArray(res.data) ? res.data : (res.data?.queries || []);
-    
     for (const q of list) {
       const qNorm = this.normalize(q.keyword || '');
       if (levenshteinSimilarity(qNorm, norm) > 0.9) {
@@ -208,33 +180,16 @@ export class NeuronWriterService {
       }
     }
 
-    this.diag(`No existing query for "${keyword}". Creating new...`);
-    const createRes = await this.callProxy('create-query', { project: projectId, keyword });
-    if (!createRes.success) return createRes;
-
-    const newQuery = {
-      id: createRes.data.query || createRes.data.id,
-      keyword: keyword,
-      status: 'new'
-    };
-
-    SESSION_DEDUP_MAP.set(norm, newQuery);
-    saveToPersistentCache(norm, newQuery);
-    return { success: true, query: newQuery };
+    return { success: true, query: undefined };
   }
 
   async getQueryAnalysis(queryId: string): Promise<{ success: boolean; analysis?: NeuronWriterAnalysis; error?: string }> {
-    this.diag(`Fetching analysis for query ${queryId}...`);
+    this.diag(`Fetching analysis ${queryId}...`);
     const res = await this.callProxy('get-query', { query: queryId });
     if (!res.success) return res;
 
     const raw = res.data;
-    if (!raw) {
-      return { success: false, error: 'Empty data payload from NeuronWriter' };
-    }
-
-    // AUTO-HEALING: NeuronWriter API can be flaky with field names
-    const data = raw.data || raw; // Sometimes nested in .data
+    const data = raw.data || raw;
     
     const analysis: NeuronWriterAnalysis = {
       query_id: queryId,
@@ -250,12 +205,16 @@ export class NeuronWriterService {
       competitorData: data.competitors || data.competitor_data || []
     };
 
-    // Diagnostics
-    if (!analysis.terms?.length && !analysis.entities?.length) {
-      this.diag('WARNING: Analysis returned 0 terms/entities. Structure might have changed.');
-    }
-
     return { success: true, analysis };
+  }
+
+  formatTermsForPrompt(terms: NeuronWriterTermData[], analysis: NeuronWriterAnalysis): string {
+    if (!terms?.length) return 'No specific terms provided.';
+    const formatted = terms.slice(0, 40).map(t => `${t.term} (count: ${t.frequency}, target: ${t.recommended})`).join(', ');
+    return `NEURONWRITER SOTA SEMANTIC CONTEXT:
+Target Score: ${analysis.content_score || 0}/100
+Recommended Length: ${analysis.recommended_length || 0} words
+Key Terms to Integrate: ${formatted}`;
   }
 
   private parseTerms(raw: any[]): NeuronWriterTermData[] {
@@ -288,4 +247,14 @@ export class NeuronWriterService {
       relevanceScore: h.relevance || 0
     }));
   }
+}
+
+export function createNeuronWriterService(apiKeyOrConfig: string | NeuronWriterProxyConfig) {
+  if (typeof apiKeyOrConfig === 'string') {
+    return new NeuronWriterService({
+      supabaseUrl: import.meta.env.VITE_SUPABASE_URL,
+      supabaseAnonKey: import.meta.env.VITE_SUPABASE_ANON_KEY
+    });
+  }
+  return new NeuronWriterService(apiKeyOrConfig);
 }

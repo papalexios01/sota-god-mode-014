@@ -255,7 +255,7 @@ export function registerRoutes(app: Express): void {
   app.post("/api/neuronwriter-proxy", async (req: Request, res: Response) => {
     try {
       const { endpoint, method = "POST", apiKey, body: requestBody } = req.body;
-      const apiKeyFromHeader = req.headers["x-neuronwriter-key"] as string | undefined;
+      const apiKeyFromHeader = (req.headers["x-neuronwriter-key"] || req.headers["x-nw-api-key"]) as string | undefined;
       const finalApiKey = apiKey || apiKeyFromHeader;
 
       if (!endpoint || typeof endpoint !== "string") {
@@ -266,7 +266,9 @@ export function registerRoutes(app: Express): void {
       }
 
       const cleanApiKey = String(finalApiKey).trim();
-      const url = `${NEURON_API_BASE}${endpoint}`;
+      // Ensure proper URL construction: base ends without slash, endpoint starts with slash
+      const cleanEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
+      const url = `${NEURON_API_BASE}${cleanEndpoint}`;
 
       let timeoutMs = 45_000;
       if (endpoint === "/list-projects" || endpoint === "/list-queries") timeoutMs = 20_000;

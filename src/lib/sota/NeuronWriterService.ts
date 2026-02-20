@@ -159,26 +159,52 @@ export class NeuronWriterService {
     return new Promise(resolve => setTimeout(resolve, ms));
   }
 
+  /**
+   * Resolve the proxy URL. Priority:
+   *   1. customProxyUrl (explicit override)
+   *   2. Supabase Edge Function (if supabaseUrl is configured)
+   *   3. Local Express server at /api/neuronwriter-proxy (dev fallback)
+   */
+  private resolveProxyUrl(): string {
+    if (this.config.customProxyUrl) return this.config.customProxyUrl;
+    if (this.config.supabaseUrl && this.config.supabaseUrl.trim().length > 0) {
+      return `${this.config.supabaseUrl}/functions/v1/neuronwriter-proxy`;
+    }
+    // Fallback: local Express server proxy (Vite forwards /api/* to localhost:3001)
+    return '/api/neuronwriter-proxy';
+  }
+
   private async callProxy(endpoint: string, payload: any = {}): Promise<NWApiResponse> {
     let lastError = '';
+    // Ensure endpoint starts with '/'
+    const cleanEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
+
     for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
       try {
-        const url = this.config.customProxyUrl || `${this.config.supabaseUrl}/functions/v1/neuronwriter-proxy`;
+        const url = this.resolveProxyUrl();
+        this.diag(`callProxy → ${url} | endpoint: ${cleanEndpoint} (attempt ${attempt + 1}/${MAX_RETRIES})`);
         
         const headers: Record<string, string> = {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${this.config.supabaseAnonKey}`,
         };
+
+        // Add Supabase auth header when using Supabase Edge Function
+        if (this.config.supabaseAnonKey && this.config.supabaseUrl && url.includes(this.config.supabaseUrl)) {
+          headers['Authorization'] = `Bearer ${this.config.supabaseAnonKey}`;
+        }
 
         if (this.config.neuronWriterApiKey) {
           headers['X-NW-Api-Key'] = this.config.neuronWriterApiKey;
+          headers['X-NeuronWriter-Key'] = this.config.neuronWriterApiKey;
         }
 
-        // NEURONWRITER REQUIRES ALL REQUESTS TO BE POST, EVEN WHEN JUST FETCHING LISTS.
-        let requestBody: any = {
-          endpoint: endpoint,
-          method: 'POST', // <-- CRITICAL FIX: Always tell the proxy to use POST.
-          body: payload.body || {}, // Include an empty object if no body was provided
+        // Build request body — include the API key so both server-side
+        // and Supabase Edge Function proxies can find it.
+        const requestBody: any = {
+          endpoint: cleanEndpoint,
+          method: 'POST',
+          apiKey: this.config.neuronWriterApiKey || '',
+          body: payload.body || {},
         };
 
         const response = await fetch(url, {
@@ -193,9 +219,19 @@ export class NeuronWriterService {
         }
         
         const result = await response.json();
-        return { success: true, data: result };
+
+        // The server-side proxy wraps the response in { success, data };
+        // the Supabase edge function returns raw NW data.
+        if (result.success === false && result.error) {
+          throw new Error(result.error);
+        }
+
+        // Normalize: extract the inner data if the proxy wrapped it
+        const data = result.data !== undefined ? result.data : result;
+        return { success: true, data };
       } catch (err: any) {
         lastError = err.message;
+        this.diag(`callProxy attempt ${attempt + 1} failed: ${lastError}`);
         if (attempt < MAX_RETRIES - 1) await this.sleep(INITIAL_RETRY_DELAY_MS * Math.pow(2, attempt));
       }
     }
@@ -208,9 +244,10 @@ export class NeuronWriterService {
 
   async listProjects(): Promise<{ success: boolean; projects?: NeuronWriterProject[]; error?: string }> {
     this.diag('Fetching projects list...');
-    const res = await this.callProxy('projects', { body: {} }); // Force sending an empty body
+    const res = await this.callProxy('/list-projects', { body: {} });
     if (!res.success) return res;
-    return { success: true, projects: res.data?.projects || res.data || [] };
+    const projects = res.data?.projects || (Array.isArray(res.data) ? res.data : []);
+    return { success: true, projects };
   }
 
   async findQueryByKeyword(projectId: string, keyword: string): Promise<{ success: boolean; query?: NeuronWriterQuery; error?: string }> {
@@ -222,7 +259,7 @@ export class NeuronWriterService {
     if (persistentHit) return { success: true, query: persistentHit };
 
     this.diag(`Searching project ${projectId} for "${keyword}"...`);
-    const res = await this.callProxy(`projects/${projectId}/queries`, { body: {} });
+    const res = await this.callProxy('/list-queries', { body: { project: projectId } });
     if (!res.success) return res;
 
     const list = Array.isArray(res.data) ? res.data : (res.data?.queries || []);
@@ -240,7 +277,7 @@ export class NeuronWriterService {
 
   async getQueryAnalysis(queryId: string): Promise<{ success: boolean; analysis?: NeuronWriterAnalysis; error?: string }> {
     this.diag(`Fetching analysis ${queryId}...`);
-    const res = await this.callProxy(`queries/${queryId}`, { body: {} });
+    const res = await this.callProxy('/get-query', { body: { query: queryId } });
     if (!res.success) return res;
 
     const data = res.data?.data || res.data;

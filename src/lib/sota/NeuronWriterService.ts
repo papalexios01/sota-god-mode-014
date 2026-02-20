@@ -77,8 +77,10 @@ function levenshteinDistance(a: string, b: string): number {
   const n = b.length;
   if (m === 0) return n;
   if (n === 0) return m;
+
   let prev = Array.from({ length: n + 1 }, (_, i) => i);
   let curr = new Array(n + 1);
+
   for (let i = 1; i <= m; i++) {
     curr[0] = i;
     for (let j = 1; j <= n; j++) {
@@ -103,7 +105,8 @@ function wordOrderIndependentSimilarity(a: string, b: string): number {
 }
 
 // ── Persistent Cache ───────────────────────────────────────────────────────
-const SESSION_DEDUP_MAP = new Map<string, any>();
+
+const SESSION_DEDUP_MAP = new Map();
 
 function loadPersistentCache(): any[] {
   try {
@@ -112,20 +115,25 @@ function loadPersistentCache(): any[] {
     const entries: any[] = JSON.parse(raw);
     const now = Date.now();
     return entries.filter(e => now - e.createdAt < PERSISTENT_CACHE_MAX_AGE_MS);
-  } catch { return []; }
+  } catch {
+    return [];
+  }
 }
 
 function savePersistentCache(entries: any[]): void {
-  try { localStorage.setItem(PERSISTENT_CACHE_KEY, JSON.stringify(entries)); } catch {}
+  try {
+    localStorage.setItem(PERSISTENT_CACHE_KEY, JSON.stringify(entries));
+  } catch {}
 }
 
 function findInPersistentCache(normalizedKeyword: string): any | null {
   const cache = loadPersistentCache();
   const exact = cache.find(e => e.normalizedKeyword === normalizedKeyword);
   if (exact) return exact;
-  
+
   let bestMatch: any | null = null;
   let bestSimilarity = 0;
+
   for (const entry of cache) {
     const sim = Math.max(
       levenshteinSimilarity(entry.normalizedKeyword, normalizedKeyword),
@@ -155,26 +163,29 @@ export class NeuronWriterService {
 
   private diag(msg: string): void {
     const cb = this.proxyConfig.onDiagnostic;
-    if (cb) cb(msg); else console.log('[NeuronWriter]', msg);
+    if (cb) cb(msg);
+    else console.log('[NeuronWriter]', msg);
   }
 
   static cleanKeyword(raw: string): string {
     return raw.toLowerCase()
-      .replace(/[-_]+/g, ' ')
+      .replace(/[-\_]+/g, ' ')
       .replace(/\b\d{4}\b/g, '')
       .replace(/[^a-z0-9\s]/g, '')
       .replace(/\s+/g, ' ')
       .trim();
   }
 
-  private normalize(s: string): string { return NeuronWriterService.cleanKeyword(s); }
+  private normalize(s: string): string {
+    return NeuronWriterService.cleanKeyword(s);
+  }
 
   private async callProxy(endpoint: string, body?: Record<string, any>, retryCount: number = 0): Promise<NWApiResponse> {
     const proxyEndpoints = [];
     if (this.proxyConfig.customProxyUrl) proxyEndpoints.push({ url: this.proxyConfig.customProxyUrl, label: 'custom' });
     proxyEndpoints.push({ url: '/api/neuronwriter-proxy', label: 'Express' });
     proxyEndpoints.push({ url: '/api/neuronwriter', label: 'Serverless' });
-    
+
     if (this.proxyConfig.supabaseUrl) {
       proxyEndpoints.push({
         url: this.proxyConfig.supabaseUrl.replace(/\/$/, '') + '/functions/v1/neuronwriter-proxy',
@@ -197,7 +208,9 @@ export class NeuronWriterService {
         const data = await res.json();
         if (data.success !== false) return data;
         lastError = data.error || 'Unknown error';
-      } catch (e) { lastError = String(e); }
+      } catch (e) {
+        lastError = String(e);
+      }
     }
 
     if (retryCount < MAX_RETRIES) {
@@ -220,7 +233,6 @@ export class NeuronWriterService {
     if (!res.success) return res;
 
     const list = Array.isArray(res.data) ? res.data : (res.data as any)?.queries || [];
-    
     for (const q of list) {
       const qNorm = this.normalize(q.keyword || '');
       if (levenshteinSimilarity(qNorm, norm) > 0.9) {
@@ -266,7 +278,6 @@ export class NeuronWriterService {
 
     const hasTerms = (analysis.terms?.length || 0) > 0;
     const hasEntities = (analysis.entities?.length || 0) > 0;
-
     if (!hasTerms && !hasEntities) {
       this.diag(`WARNING: Analysis ${queryId} found but no terms/entities parsed. Raw keys: ${Object.keys(raw).join(', ')}`);
     }
@@ -324,23 +335,18 @@ export class NeuronWriterService {
     const sections = [
       `NEURONWRITER ANALYSIS [ID: ${analysis.query_id}]`,
       `Target Score: 90%+ | Rec Length: ${analysis.recommended_length} words`,
-      '
-CORE SEO TERMS (MUST USE):',
+      ' CORE SEO TERMS (MUST USE):',
       ...terms.slice(0, 50).map((t, i) => ` ${i+1}. "${t.term}" (target: ${t.recommended}x)`),
-      '
-ENTITIES:',
+      ' ENTITIES:',
       ...(analysis.entities || []).slice(0, 25).map((e, i) => ` ${i+1}. "${e.entity}"`),
-      '
-RECOMMENDED HEADINGS:',
+      ' RECOMMENDED HEADINGS:',
       ...(analysis.headingsH2 || []).slice(0, 10).map((h, i) => ` H2: "${h.text}"`),
-      '
-STRATEGY:',
+      ' STRATEGY:',
       '1. Distribute terms naturally across all sections.',
       '2. Use recommended headings as H2/H3 foundations.',
       '3. Ensure entities are mentioned with context.'
     ];
-    return sections.join('
-');
+    return sections.join(' ');
   }
 
   static removeSessionEntry(keyword: string): void {
@@ -359,6 +365,7 @@ export function scoreContentAgainstNeuron(html: string, analysis: NeuronWriterAn
   const underused: string[] = [];
   const optimal: string[] = [];
   let matched = 0;
+
   for (const t of terms) {
     const count = (text.match(new RegExp(t.term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi')) || []).length;
     if (count === 0) missing.push(t.term);
@@ -366,9 +373,12 @@ export function scoreContentAgainstNeuron(html: string, analysis: NeuronWriterAn
     else optimal.push(t.term);
     if (count > 0) matched++;
   }
+
   return {
     score: Math.round((matched / (terms.length || 1)) * 100),
-    missing, underused, optimal
+    missing,
+    underused,
+    optimal
   };
 }
 

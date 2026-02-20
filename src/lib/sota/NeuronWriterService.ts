@@ -46,10 +46,6 @@ export interface NeuronWriterAnalysis {
   entities?: Array<{ entity: string; usage_pc?: number; frequency?: number }>;
   headingsH2?: NeuronWriterHeadingData[];
   headingsH3?: NeuronWriterHeadingData[];
-  h1Suggestions?: any[];
-  h2Suggestions?: any[];
-  h3Suggestions?: any[];
-  recommendations?: any;
   competitorData?: any[];
 }
 
@@ -59,11 +55,16 @@ export interface NeuronWriterQuery {
   status: string;
 }
 
+export interface NeuronWriterProject {
+  id: string;
+  name: string;
+  queries_count?: number;
+}
+
 const MAX_RETRIES = 3;
 const INITIAL_RETRY_DELAY_MS = 1000;
 const PERSISTENT_CACHE_KEY = 'sota-nw-dedup-cache-v7.2';
 
-// ── Fuzzy Matching Helpers ─────────────────────────────────────────────────
 function levenshteinDistance(a: string, b: string): number {
   const m = a.length, n = b.length;
   if (m === 0) return n;
@@ -86,7 +87,6 @@ function levenshteinSimilarity(a: string, b: string): number {
   return 1.0 - levenshteinDistance(a, b) / maxLen;
 }
 
-// ── Persistent Cache Management ─────────────────────────────────────────────
 const SESSION_DEDUP_MAP = new Map<string, NeuronWriterQuery>();
 
 function getPersistentCache(): Record<string, { query: NeuronWriterQuery; timestamp: number }> {
@@ -157,6 +157,13 @@ export class NeuronWriterService {
     return s.toLowerCase().replace(/[^a-z0-9]/g, '').trim();
   }
 
+  async listProjects(): Promise<{ success: boolean; projects?: NeuronWriterProject[]; error?: string }> {
+    this.diag('Fetching projects list...');
+    const res = await this.callProxy('list-projects', {});
+    if (!res.success) return res;
+    return { success: true, projects: res.data?.projects || res.data || [] };
+  }
+
   async findQueryByKeyword(projectId: string, keyword: string): Promise<{ success: boolean; query?: NeuronWriterQuery; error?: string }> {
     const norm = this.normalize(keyword);
     const sessionHit = SESSION_DEDUP_MAP.get(norm);
@@ -179,7 +186,6 @@ export class NeuronWriterService {
         return { success: true, query: mapped };
       }
     }
-
     return { success: true, query: undefined };
   }
 
@@ -188,9 +194,7 @@ export class NeuronWriterService {
     const res = await this.callProxy('get-query', { query: queryId });
     if (!res.success) return res;
 
-    const raw = res.data;
-    const data = raw.data || raw;
-    
+    const data = res.data?.data || res.data;
     const analysis: NeuronWriterAnalysis = {
       query_id: queryId,
       status: data.status || 'ready',
@@ -204,7 +208,6 @@ export class NeuronWriterService {
       headingsH3: this.parseHeadings(data.headings_h3 || data.h3_suggestions || []),
       competitorData: data.competitors || data.competitor_data || []
     };
-
     return { success: true, analysis };
   }
 

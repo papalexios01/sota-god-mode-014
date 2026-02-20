@@ -1,8 +1,9 @@
 // src/lib/sota/NeuronWriterService.ts
 // ═══════════════════════════════════════════════════════════════════════════════
-// NEURONWRITER SERVICE v7.6 — ENTERPRISE RESILIENCE & AUTO-HEALING ENGINE
-// FIXED: Ensures X-NW-Api-Key is passed in headers so the Supabase Edge Function
-//        can read the dynamically input API key from the UI instead of Deno.env.
+// NEURONWRITER SERVICE v7.7 — ENTERPRISE RESILIENCE & AUTO-HEALING ENGINE
+// FIXED: ALL requests to the NeuronWriter API (via our Edge Function) MUST use 
+//        POST according to the NeuronWriter v0.5 documentation, even when fetching
+//        data like lists of projects or queries. 
 // ═══════════════════════════════════════════════════════════════════════════════
 
 export interface NeuronWriterProxyConfig {
@@ -66,7 +67,7 @@ export interface NeuronWriterProject {
 
 const MAX_RETRIES = 3;
 const INITIAL_RETRY_DELAY_MS = 1000;
-const PERSISTENT_CACHE_KEY = 'sota-nw-dedup-cache-v7.6';
+const PERSISTENT_CACHE_KEY = 'sota-nw-dedup-cache-v7.7';
 
 function levenshteinDistance(a: string, b: string): number {
   const m = a.length, n = b.length;
@@ -173,15 +174,12 @@ export class NeuronWriterService {
           headers['X-NW-Api-Key'] = this.config.neuronWriterApiKey;
         }
 
+        // NEURONWRITER REQUIRES ALL REQUESTS TO BE POST, EVEN WHEN JUST FETCHING LISTS.
         let requestBody: any = {
           endpoint: endpoint,
-          method: payload.method || 'POST',
-          body: payload.body || {},
+          method: 'POST', // <-- CRITICAL FIX: Always tell the proxy to use POST.
+          body: payload.body || {}, // Include an empty object if no body was provided
         };
-
-        if (requestBody.method === 'GET') {
-          delete requestBody.body;
-        }
 
         const response = await fetch(url, {
           method: 'POST',
@@ -210,7 +208,7 @@ export class NeuronWriterService {
 
   async listProjects(): Promise<{ success: boolean; projects?: NeuronWriterProject[]; error?: string }> {
     this.diag('Fetching projects list...');
-    const res = await this.callProxy('projects', { method: 'GET' });
+    const res = await this.callProxy('projects', { body: {} }); // Force sending an empty body
     if (!res.success) return res;
     return { success: true, projects: res.data?.projects || res.data || [] };
   }
@@ -224,7 +222,7 @@ export class NeuronWriterService {
     if (persistentHit) return { success: true, query: persistentHit };
 
     this.diag(`Searching project ${projectId} for "${keyword}"...`);
-    const res = await this.callProxy(`projects/${projectId}/queries`, { method: 'GET' });
+    const res = await this.callProxy(`projects/${projectId}/queries`, { body: {} });
     if (!res.success) return res;
 
     const list = Array.isArray(res.data) ? res.data : (res.data?.queries || []);
@@ -242,7 +240,7 @@ export class NeuronWriterService {
 
   async getQueryAnalysis(queryId: string): Promise<{ success: boolean; analysis?: NeuronWriterAnalysis; error?: string }> {
     this.diag(`Fetching analysis ${queryId}...`);
-    const res = await this.callProxy(`queries/${queryId}`, { method: 'GET' });
+    const res = await this.callProxy(`queries/${queryId}`, { body: {} });
     if (!res.success) return res;
 
     const data = res.data?.data || res.data;

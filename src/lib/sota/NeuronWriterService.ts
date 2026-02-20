@@ -1,9 +1,12 @@
 // src/lib/sota/NeuronWriterService.ts
 // ═══════════════════════════════════════════════════════════════════════════════
-// NEURONWRITER SERVICE v7.2 — ENTERPRISE RESILIENCE & AUTO-HEALING ENGINE
+// NEURONWRITER SERVICE v7.3 — ENTERPRISE RESILIENCE & AUTO-HEALING ENGINE
+// FIXED: createNeuronWriterService now correctly passes neuronWriterApiKey
+//        to the config so callProxy can forward it in the X-NW-Api-Key header.
 // ═══════════════════════════════════════════════════════════════════════════════
 
 export interface NeuronWriterProxyConfig {
+  neuronWriterApiKey?: string;
   supabaseUrl?: string;
   supabaseAnonKey?: string;
   customProxyUrl?: string;
@@ -63,7 +66,7 @@ export interface NeuronWriterProject {
 
 const MAX_RETRIES = 3;
 const INITIAL_RETRY_DELAY_MS = 1000;
-const PERSISTENT_CACHE_KEY = 'sota-nw-dedup-cache-v7.2';
+const PERSISTENT_CACHE_KEY = 'sota-nw-dedup-cache-v7.3';
 
 function levenshteinDistance(a: string, b: string): number {
   const m = a.length, n = b.length;
@@ -117,7 +120,20 @@ function findInPersistentCache(keyword: string): NeuronWriterQuery | undefined {
 }
 
 export class NeuronWriterService {
-  constructor(private config: NeuronWriterProxyConfig) {}
+  private config: NeuronWriterProxyConfig;
+
+  constructor(configOrApiKey: NeuronWriterProxyConfig | string) {
+    // Support both object config and legacy string (API key only) usage
+    if (typeof configOrApiKey === 'string') {
+      this.config = {
+        neuronWriterApiKey: configOrApiKey,
+        supabaseUrl: typeof import.meta !== 'undefined' ? (import.meta.env?.VITE_SUPABASE_URL ?? '') : '',
+        supabaseAnonKey: typeof import.meta !== 'undefined' ? (import.meta.env?.VITE_SUPABASE_ANON_KEY ?? '') : '',
+      };
+    } else {
+      this.config = configOrApiKey;
+    }
+  }
 
   private diag(msg: string) {
     console.log(`[NeuronWriter] ${msg}`);
@@ -133,13 +149,21 @@ export class NeuronWriterService {
     for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
       try {
         const url = this.config.customProxyUrl || `${this.config.supabaseUrl}/functions/v1/neuronwriter-proxy`;
+
+        // Build headers — always include X-NW-Endpoint and, when available, X-NW-Api-Key
+        const headers: Record<string, string> = {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${this.config.supabaseAnonKey}`,
+          'X-NW-Endpoint': endpoint,
+        };
+
+        if (this.config.neuronWriterApiKey) {
+          headers['X-NW-Api-Key'] = this.config.neuronWriterApiKey;
+        }
+
         const response = await fetch(url, {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${this.config.supabaseAnonKey}`,
-            'X-NW-Endpoint': endpoint
-          },
+          headers,
           body: JSON.stringify(payload)
         });
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -214,10 +238,7 @@ export class NeuronWriterService {
   formatTermsForPrompt(terms: NeuronWriterTermData[], analysis: NeuronWriterAnalysis): string {
     if (!terms?.length) return 'No specific terms provided.';
     const formatted = terms.slice(0, 40).map(t => `${t.term} (count: ${t.frequency}, target: ${t.recommended})`).join(', ');
-    return `NEURONWRITER SOTA SEMANTIC CONTEXT:
-Target Score: ${analysis.content_score || 0}/100
-Recommended Length: ${analysis.recommended_length || 0} words
-Key Terms to Integrate: ${formatted}`;
+    return `NEURONWRITER SOTA SEMANTIC CONTEXT:\nTarget Score: ${analysis.content_score || 0}/100\nRecommended Length: ${analysis.recommended_length || 0} words\nKey Terms to Integrate: ${formatted}`;
   }
 
   private parseTerms(raw: any[]): NeuronWriterTermData[] {
@@ -252,11 +273,21 @@ Key Terms to Integrate: ${formatted}`;
   }
 }
 
-export function createNeuronWriterService(apiKeyOrConfig: string | NeuronWriterProxyConfig) {
+/**
+ * Factory — accepts either a plain API key string OR a full NeuronWriterProxyConfig object.
+ *
+ * FIX v7.3: When a plain string is passed (the NeuronWriter API key), we now correctly
+ * store it in config.neuronWriterApiKey so every callProxy() includes it as
+ * the X-NW-Api-Key request header. Previously the key was silently dropped.
+ */
+export function createNeuronWriterService(apiKeyOrConfig: string | NeuronWriterProxyConfig): NeuronWriterService {
   if (typeof apiKeyOrConfig === 'string') {
+    const supabaseUrl = typeof import.meta !== 'undefined' ? (import.meta.env?.VITE_SUPABASE_URL ?? '') : '';
+    const supabaseAnonKey = typeof import.meta !== 'undefined' ? (import.meta.env?.VITE_SUPABASE_ANON_KEY ?? '') : '';
     return new NeuronWriterService({
-      supabaseUrl: import.meta.env.VITE_SUPABASE_URL,
-      supabaseAnonKey: import.meta.env.VITE_SUPABASE_ANON_KEY
+      neuronWriterApiKey: apiKeyOrConfig,
+      supabaseUrl,
+      supabaseAnonKey,
     });
   }
   return new NeuronWriterService(apiKeyOrConfig);

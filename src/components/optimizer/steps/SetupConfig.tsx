@@ -79,7 +79,11 @@ export function SetupConfig() {
     setNwFetchAttempted(true);
 
     try {
-      const service = createNeuronWriterService(apiKey);
+      const service = createNeuronWriterService({
+        neuronWriterApiKey: apiKey,
+        supabaseUrl: sbUrl.trim() || configRef.current.supabaseUrl,
+        supabaseAnonKey: sbAnonKey.trim() || configRef.current.supabaseAnonKey
+      });
       const result = await service.listProjects();
 
       if (result.success && result.projects) {
@@ -105,7 +109,7 @@ export function SetupConfig() {
     } finally {
       setNeuronWriterLoading(false);
     }
-  }, [setNeuronWriterProjects, setNeuronWriterLoading, setNeuronWriterError, setConfig]);
+  }, [setNeuronWriterProjects, setNeuronWriterLoading, setNeuronWriterError, setConfig, sbUrl, sbAnonKey]);
 
   useEffect(() => {
     if (config.enableNeuronWriter && config.neuronWriterApiKey && config.neuronWriterApiKey.trim().length >= 10) {

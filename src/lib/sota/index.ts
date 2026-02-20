@@ -1,15 +1,15 @@
 // src/lib/sota/index.ts
-// SOTA Content Engine — Enterprise Barrel Export v3.2 (All exports verified)
+// SOTA Content Engine — Enterprise Barrel Export v3.3 (All exports verified)
 
-// ─── Core Types ──────────────────────────────────────────────────────────────
-export type {
+// ─── Core Types ──────────────────────────────────────────────────────────────────────────────
+Export type {
   GeneratedContent,
   QualityScore,
   ContentMetrics,
   AnalyticsDashboardData,
 } from "./types";
 
-// ─── NeuronWriter Service (class + factory + scoring + types) ────────────────
+// ─── NeuronWriter Service (class + factory + scoring + types) ────────────────────────────────────────
 export {
   NeuronWriterService,
   createNeuronWriterService,
@@ -23,7 +23,7 @@ export type {
 } from "./NeuronWriterService";
 
 // Backward-compatible standalone wrappers (old code may still import these)
-import { NeuronWriterService as _NWService } from "./NeuronWriterService";
+import { createNeuronWriterService as _createNW } from "./NeuronWriterService";
 import type { NeuronWriterAnalysis as _NWAnalysis } from "./NeuronWriterService";
 
 export async function fetchNeuronWriterAnalysis(
@@ -31,7 +31,8 @@ export async function fetchNeuronWriterAnalysis(
   projectId: string,
   keyword: string,
 ): Promise<{ success: boolean; analysis?: _NWAnalysis; error?: string }> {
-  const service = new _NWService(apiKey);
+  // Use the factory so the API key is correctly wired into the service config
+  const service = _createNW(apiKey);
   const queryResult = await service.findQueryByKeyword(projectId, keyword);
   if (!queryResult.success || !queryResult.query) {
     return { success: false, error: queryResult.error || "Query not found" };
@@ -43,19 +44,20 @@ export function buildNeuronWriterPromptSection(
   analysis: _NWAnalysis | null | undefined,
 ): string {
   if (!analysis) return "";
-  const service = new _NWService("unused");
+  // Use factory with a placeholder key — formatTermsForPrompt is a pure helper
+  const service = _createNW('__format_only__');
   return service.formatTermsForPrompt(analysis.terms || [], analysis);
 }
 
-// ─── Internal Link Engine ────────────────────────────────────────────────────
+// ─── Internal Link Engine ───────────────────────────────────────────────────────────────────────────
 export { SOTAInternalLinkEngine, createInternalLinkEngine } from "./SOTAInternalLinkEngine";
 export type { InternalLink } from "./types";
 
-// ─── Content Prompt Builder ──────────────────────────────────────────────────
+// ─── Content Prompt Builder ──────────────────────────────────────────────────────────────────────────
 export { buildMasterSystemPrompt, buildMasterUserPrompt } from "./prompts/masterContentPrompt";
 export type { ContentPromptConfig } from "./prompts/masterContentPrompt";
 
-// ─── Content Post-Processor ──────────────────────────────────────────────────
+// ─── Content Post-Processor ──────────────────────────────────────────────────────────────────────────
 export {
   ContentPostProcessor,
   enhanceHtmlDesign,
@@ -64,13 +66,13 @@ export {
   postProcessContent,
 } from "./ContentPostProcessor";
 
-// ─── Schema Generator ────────────────────────────────────────────────────────
+// ─── Schema Generator ───────────────────────────────────────────────────────────────────────────────
 export { SchemaGenerator } from "./SchemaGenerator";
 
-// ─── EEAT Validator ──────────────────────────────────────────────────────────
+// ─── EEAT Validator ──────────────────────────────────────────────────────────────────────────────────
 export { EEATValidator } from "./EEATValidator";
 
-// ─── Quality Validator ───────────────────────────────────────────────────────
+// ─── Quality Validator ─────────────────────────────────────────────────────────────────────────────
 export {
   calculateQualityScore,
   analyzeContent,
@@ -79,28 +81,28 @@ export {
   validateVisualBreaks,
 } from "./QualityValidator";
 
-// ─── Performance Tracker ─────────────────────────────────────────────────────
+// ─── Performance Tracker ───────────────────────────────────────────────────────────────────────────
 export { globalPerformanceTracker } from "./PerformanceTracker";
 
-// ─── Reference Service ───────────────────────────────────────────────────────
+// ─── Reference Service ──────────────────────────────────────────────────────────────────────────────
 export { ReferenceService } from "./ReferenceService";
 
-// ─── YouTube Service ─────────────────────────────────────────────────────────
+// ─── YouTube Service ────────────────────────────────────────────────────────────────────────────────
 export { YouTubeService } from "./YouTubeService";
 
-// ─── SERP Analyzer ───────────────────────────────────────────────────────────
+// ─── SERP Analyzer ─────────────────────────────────────────────────────────────────────────────────
 export { SERPAnalyzer } from "./SERPAnalyzer";
 
-// ─── SEO Health Scorer ───────────────────────────────────────────────────────
+// ─── SEO Health Scorer ────────────────────────────────────────────────────────────────────────────
 export { SEOHealthScorer } from "./SEOHealthScorer";
 
-// ─── God Mode Engine ─────────────────────────────────────────────────────────
+// ─── God Mode Engine ────────────────────────────────────────────────────────────────────────────────
 export { GodModeEngine } from "./GodModeEngine";
 
-// ─── Cache ───────────────────────────────────────────────────────────────────
+// ─── Cache ──────────────────────────────────────────────────────────────────────────────────────
 export { generationCache } from "./cache";
 
-// ─── Sanitize (export both old and new names for compatibility) ──────────────
+// ─── Sanitize (export both old and new names for compatibility) ────────────────────────────────────
 export {
   sanitizeHtml as sanitizeContent,
   sanitizeHtml,
@@ -108,5 +110,5 @@ export {
   htmlToText,
 } from "./sanitize";
 
-// ─── Enterprise Orchestrator ─────────────────────────────────────────────────
+// ─── Enterprise Orchestrator ────────────────────────────────────────────────────────────────────────
 export { createOrchestrator } from "./EnterpriseContentOrchestrator";

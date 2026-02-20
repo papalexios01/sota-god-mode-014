@@ -122,8 +122,8 @@ export class SOTAContentGenerationEngine {
     if (error instanceof Error) {
       const msg = error.message;
       return RETRYABLE_STATUS_CODES.some(code => msg.includes(String(code))) ||
-             msg.includes('ECONNRESET') || msg.includes('ETIMEDOUT') ||
-             msg.includes('ERR_HTTP2_PROTOCOL_ERROR') || msg.includes('fetch failed');
+        msg.includes('ECONNRESET') || msg.includes('ETIMEDOUT') ||
+        msg.includes('ERR_HTTP2_PROTOCOL_ERROR') || msg.includes('fetch failed');
     }
     return false;
   }
@@ -134,7 +134,7 @@ export class SOTAContentGenerationEngine {
     if (!apiKey) throw new Error(`No API key configured for ${model}`);
 
     const cacheKey = `${model}:${simpleHash(prompt)}:${simpleHash(systemPrompt || '')}`;
-    const cached = generationCache.get(cacheKey);
+    const cached = generationCache.get<GenerationResult>(cacheKey);
     if (cached) {
       generationCache.recordHit();
       return { ...cached, cached: true };

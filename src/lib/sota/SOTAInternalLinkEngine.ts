@@ -201,6 +201,7 @@ export class SOTAInternalLinkEngine {
       context: candidate.context,
       relevanceScore: candidate.relevanceScore,
       position: positions[i] || 'middle',
+      priority: 1,
     }));
   }
 

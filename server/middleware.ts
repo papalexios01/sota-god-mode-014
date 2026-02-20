@@ -16,7 +16,7 @@ export function requestIdMiddleware(
   const existing = req.header("x-request-id");
   const id = existing || crypto.randomUUID();
   res.setHeader("X-Request-Id", id);
-  (req as Record<string, unknown>).requestId = id;
+  (req as unknown as Record<string, unknown>).requestId = id;
   next();
 }
 
@@ -32,8 +32,8 @@ export function timingMiddleware(
   const start = performance.now();
   res.on("finish", () => {
     const ms = (performance.now() - start).toFixed(1);
-    const id = (req as Record<string, unknown>).requestId
-      ? ` rid=${(req as Record<string, unknown>).requestId}`
+    const id = (req as unknown as Record<string, unknown>).requestId
+      ? ` rid=${(req as unknown as Record<string, unknown>).requestId}`
       : "";
     console.log(
       `[${req.method}] ${req.originalUrl} -> ${res.statusCode} (${ms}ms)${id}`,

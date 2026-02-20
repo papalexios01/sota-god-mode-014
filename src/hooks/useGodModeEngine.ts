@@ -55,7 +55,7 @@ export function useGodModeEngine() {
 
     // Handle stats: extract delta fields + pass-through metadata fields
     if (stats && typeof stats === 'object') {
-      const statsUpdate = stats as Record<string, unknown>;
+      const statsUpdate = stats as unknown as Record<string, unknown>;
       if (statsUpdate.totalProcessed !== undefined) {
         updateGodModeStats({
           totalProcessed: statsUpdate.totalProcessed as number,

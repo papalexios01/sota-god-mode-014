@@ -242,7 +242,7 @@ export function registerRoutes(app: Express): void {
         if (!itemId) {
           return errorResponse(res, 400, "Missing itemId", "validation_error");
         }
-        await db!.delete(generatedBlogPosts).where(eq(generatedBlogPosts.itemId, itemId));
+        await db!.delete(generatedBlogPosts).where(eq(generatedBlogPosts.itemId, itemId as string));
         res.json({ success: true });
       } catch (error) {
         console.error("[API] Delete blog post error:", error);

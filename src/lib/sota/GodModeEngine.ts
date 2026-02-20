@@ -111,7 +111,8 @@ export class GodModeEngine {
   private circuitBrokenUntil: Date | null = null;
   private qualityScoreHistory: number[] = [];
   private processingTimeHistory: number[] = [];
-  private adaptiveThrottleMs = ENTERPRISE_CONSTANTS.ADAPTIVE_THROTTLE_MIN_MS;
+  private adaptiveThrottleMs: number = ENTERPRISE_CONSTANTS.ADAPTIVE_THROTTLE_MIN_MS;
+  private sessionStartedAt: Date | null = null;
 
   constructor(options: GodModeEngineOptions) {
     this.options = options;
@@ -163,6 +164,7 @@ export class GodModeEngine {
     this.processedToday = 0;
     this.cycleCount = 0;
     this.adaptiveThrottleMs = ENTERPRISE_CONSTANTS.ADAPTIVE_THROTTLE_MIN_MS;
+    this.sessionStartedAt = new Date();
 
     const modeLabel = this.options.priorityOnlyMode ? 'PRIORITY ONLY' : 'FULL SITEMAP';
     this.log('success', `GOD MODE 2.2 ACTIVATED — Mode: ${modeLabel}`, 'Autonomous SEO engine is now running');
@@ -177,7 +179,7 @@ export class GodModeEngine {
         lastScanAt: null,
         nextScanAt: this.options.priorityOnlyMode ? null : this.calculateNextScan(),
         totalWordsGenerated: 0,
-        sessionStartedAt: new Date(),
+        sessionStartedAt: this.sessionStartedAt!,
         cycleCount: 0,
       },
     });
@@ -422,7 +424,7 @@ export class GodModeEngine {
         this.updateState({
           stats: {
             cycleCount: this.cycleCount,
-            // sessionStartedAt intentionally OMITTED — preserved from start()
+            sessionStartedAt: this.sessionStartedAt!,
             lastScanAt: this.lastScanTime,
             nextScanAt: this.calculateNextScan(),
             totalProcessed: 0,
@@ -488,7 +490,7 @@ export class GodModeEngine {
         errorCount: 0,
         avgQualityScore: 0,
         totalWordsGenerated: 0,
-        // sessionStartedAt intentionally OMITTED
+        sessionStartedAt: this.sessionStartedAt!,
         cycleCount: this.cycleCount,
       },
     });
@@ -532,7 +534,7 @@ export class GodModeEngine {
 
       const batch = urls.slice(i, i + concurrency);
       const results = await Promise.allSettled(
-        batch.map((url) => scorer.scoreUrl(url))
+        batch.map((url) => scorer.analyzePage(url))
       );
 
       for (let j = 0; j < results.length; j++) {

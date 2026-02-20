@@ -1,9 +1,9 @@
 // SOTA ENTERPRISE TYPES - WP Content Optimizer Pro
 // 🔧 CHANGED: Added PostProcessing, VisualBreak, and extended InternalLink types
 
-import type { NeuronWriterAnalysis, NeuronWriterHeading, NeuronWriterEntity } from './NeuronWriterService';
+import type { NeuronWriterAnalysis, NeuronWriterHeadingData, NeuronWriterTermData } from './NeuronWriterService';
 
-export type { NeuronWriterAnalysis, NeuronWriterHeading, NeuronWriterEntity };
+export type { NeuronWriterAnalysis, NeuronWriterHeadingData, NeuronWriterTermData };
 
 export type AIModel = 'gemini' | 'openai' | 'anthropic' | 'openrouter' | 'groq';
 
@@ -80,7 +80,8 @@ export interface InternalLink {
   context: string;
   priority: number;
   relevanceScore: number;
-  paragraphIndex?: number; // 🆕 NEW: Track which paragraph the link was placed in
+  paragraphIndex?: number;
+  position?: 'early' | 'middle' | 'late';
 }
 
 export interface SchemaMarkup {
@@ -231,6 +232,6 @@ export interface PostProcessingResult {
   violations: WallOfTextViolation[];
   /** Whether the processor modified the content. */
   wasModified: boolean;
-    /** Number of visual-break elements injected. */
+  /** Number of visual-break elements injected. */
   elementsInjected: number;
 }

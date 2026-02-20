@@ -13,7 +13,7 @@ import DOMPurify from "dompurify";
  * Intentionally permissive for styled content (inline styles on divs, tables, etc.)
  * but blocks all script/event-handler vectors.
  */
-const WP_CONTENT_CONFIG: DOMPurify.Config = {
+const WP_CONTENT_CONFIG = {
   ALLOWED_TAGS: [
     // Structure
     "h1", "h2", "h3", "h4", "h5", "h6",
@@ -70,7 +70,7 @@ export function sanitizeHtml(html: string): string {
   if (!html || typeof html !== "string") return "";
 
   // DOMPurify handles all the heavy lifting
-  let clean = DOMPurify.sanitize(html, WP_CONTENT_CONFIG);
+  let clean = DOMPurify.sanitize(html, WP_CONTENT_CONFIG) as string;
 
   // Post-processing: ensure target="_blank" links have rel="noopener noreferrer"
   clean = clean.replace(
@@ -103,7 +103,7 @@ export function sanitizeStrict(html: string): string {
     ],
     ALLOWED_ATTR: ["href", "title", "alt", "target", "rel"],
     FORBID_ATTR: ["style", "class", "id"],
-  });
+  }) as string;
 }
 
 /**
@@ -116,7 +116,7 @@ export function stripHtml(html: string): string {
   const clean = DOMPurify.sanitize(html, {
     ALLOWED_TAGS: [],
     ALLOWED_ATTR: [],
-  });
+  }) as string;
 
   // Normalize whitespace
   return clean.replace(/\s+/g, " ").trim();

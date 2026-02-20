@@ -100,6 +100,7 @@ function reconstructNeuronData(stored: NeuronWriterDataStore[string] | undefined
     type: 'basic' as const,
     weight: t.weight,
     recommended: t.sugg_usage ? t.sugg_usage[1] : Math.max(1, Math.round(t.weight * 3)),
+    frequency: 0,
     found: 0,
     status: 'missing' as const,
   }));
@@ -109,6 +110,7 @@ function reconstructNeuronData(stored: NeuronWriterDataStore[string] | undefined
     type: 'extended' as const,
     weight: t.weight,
     recommended: Math.max(1, Math.round(t.weight * 2)),
+    frequency: 0,
     found: 0,
     status: 'missing' as const,
   }));
@@ -574,24 +576,25 @@ export function ReviewExport() {
         const errorMsg = error instanceof Error
           ? `${error.name}: ${error.message}`
           : String(error) || 'Unknown generation error';
-        
-     // Classify error for user-friendly message
-     const friendlyMsg = errorMsg.includes('AbortError') || errorMsg.includes('timeout')
-       ? 'Generation timed out. Try a shorter target word count or switch AI model.'
-       : errorMsg.includes('401') || errorMsg.includes('auth') || errorMsg.includes('API key')
-       ? 'Invalid API key. Check your AI provider key in Setup.'
-       : errorMsg.includes('429') || errorMsg.includes('rate limit')
-       ? 'API rate limit hit. Wait 30s and retry.'
-       : errorMsg.includes('empty content')
-       ? 'AI returned empty content. Try switching to a different model (e.g., Gemini → GPT-4o).'
-       : errorMsg;
+
+        // Classify error for user-friendly message
+        const friendlyMsg = errorMsg.includes('AbortError') || errorMsg.includes('timeout')
+          ? 'Generation timed out. Try a shorter target word count or switch AI model.'
+          : errorMsg.includes('401') || errorMsg.includes('auth') || errorMsg.includes('API key')
+            ? 'Invalid API key. Check your AI provider key in Setup.'
+            : errorMsg.includes('429') || errorMsg.includes('rate limit')
+              ? 'API rate limit hit. Wait 30s and retry.'
+              : errorMsg.includes('empty content')
+                ? 'AI returned empty content. Try switching to a different model (e.g., Gemini → GPT-4o).'
+                : errorMsg;
         console.error(`[ReviewExport] Generation failed for "${item.title}":`, error);
         updateContentItem(item.id, { status: 'error', error: friendlyMsg });
         setGeneratingItems(prev => prev.map(gi =>
           gi.id === item.id ? { ...gi, status: 'error', error: errorMsg } : gi
         ));
         setGenerationError(friendlyMsg);
-friendlyMsg.slice(0, 200)      }
+        friendlyMsg.slice(0, 200)
+      }
 
       completed++;
       setGenerationProgress(Math.round((completed / toGenerate.length) * 100));

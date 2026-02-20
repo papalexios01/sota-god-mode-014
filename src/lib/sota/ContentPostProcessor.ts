@@ -235,7 +235,12 @@ export class ContentPostProcessor {
       elementsInjected++;
     }
 
-    return { html: result, wasModified: elementsInjected > 0, violations, elementsInjected };
+    return {
+      html: result,
+      wasModified: elementsInjected > 0,
+      violations: violations.map(v => ({ blockIndex: v.startIndex, wordCount: v.wordCount })),
+      elementsInjected
+    };
   }
 
   static findViolations(html: string, maxWords: number): Violation[] {

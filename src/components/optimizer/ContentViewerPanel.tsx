@@ -154,7 +154,7 @@ export function ContentViewerPanel({
   // but NeuronWriterTab expects { missing, underused, optimal }.
   const neuronLiveScore = useMemo(() => {
     if (!effectiveNeuronData) return null;
-    const raw = scoreContentAgainstNeuron(displayContent || content, effectiveNeuronData);
+    const raw = scoreContentAgainstNeuron(displayContent || content, [...(effectiveNeuronData.terms || []), ...(effectiveNeuronData.termsExtended || []), ...(effectiveNeuronData.basicKeywords || []), ...(effectiveNeuronData.extendedKeywords || [])]);
     if (!raw) return null;
 
     // Build term lists that the UI can render
@@ -170,15 +170,16 @@ export function ContentViewerPanel({
     const optimal: string[] = [];
 
     for (const t of allTerms) {
-      const term = (t.term || t.name || '').toLowerCase().trim();
+      const termStr = t.term || (t as any).name || '';
+      const term = termStr.toLowerCase().trim();
       if (!term) continue;
       const regex = new RegExp(term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
       const count = (contentLower.match(regex) || []).length;
       const recommended = t.recommended || t.frequency || 1;
 
-      if (count === 0) missing.push(t.term || t.name || '');
-      else if (count < recommended) underused.push(t.term || t.name || '');
-      else optimal.push(t.term || t.name || '');
+      if (count === 0) missing.push(t.term || '');
+      else if (count < recommended) underused.push(t.term || '');
+      else optimal.push(t.term || '');
     }
 
     // Add entity coverage to missing list
@@ -190,7 +191,7 @@ export function ContentViewerPanel({
     }
 
     return {
-      ...raw,
+      score: raw,
       missing,
       underused,
       optimal,
@@ -1315,10 +1316,17 @@ function NeuronWriterTab({ neuronData, content, neuronLiveScore }: NeuronWriterT
     );
   }
 
-  // ✅ FIX: Show helpful message when NW was configured but the query returned no data
+  // ✅ FIX: Show "No Data" ONLY when status is explicitly 'failed' OR
+  // when there is genuinely no data in ANY form (structured + legacy).
+  // Previously, status 'done'/'analysed'/'completed' was triggering the error because
+  // the condition checked `nwStatus !== 'ready'` which excluded all valid done states.
   const nwStatus = (neuronData as any)?.status;
   const nwFailReason = (neuronData as any)?._failReason;
-  if (nwStatus === 'failed' || (!hasStructuredData && !legacyTerms.length && nwStatus !== 'ready')) {
+  const VALID_READY_STATUSES = new Set(['done', 'ready', 'completed', 'finished', 'analysed', 'analyzed', 'processing', 'queued', 'pending']);
+  const isDefinitelyFailed = nwStatus === 'failed';
+  const hasAbsolutelyNoData = !hasStructuredData && !legacyTerms.length;
+  // Only show the error if explicitly failed, or if no data AND the status is not a known valid state
+  if (isDefinitelyFailed || (hasAbsolutelyNoData && !VALID_READY_STATUSES.has((nwStatus || '').toLowerCase()))) {
     return (
       <div className="p-8 max-w-7xl mx-auto">
         <div className="glass-card border border-yellow-500/20 rounded-3xl p-8 relative overflow-hidden shadow-xl">
@@ -1330,7 +1338,7 @@ function NeuronWriterTab({ neuronData, content, neuronLiveScore }: NeuronWriterT
             <h3 className="text-xl font-bold text-white mb-3">NeuronWriter: No Data Available</h3>
             <p className="text-zinc-400 max-w-lg mb-4">
               NeuronWriter is configured but returned no keyword/term data for this content.
-              This usually means the NeuronWriter query is broken or still processing.
+              The query may be still processing on NeuronWriter's servers, or there was an issue fetching the data.
             </p>
             {nwFailReason && (
               <div className="px-4 py-3 bg-yellow-500/10 border border-yellow-500/20 rounded-xl text-yellow-400 text-sm font-medium max-w-lg mb-4">
@@ -1342,11 +1350,17 @@ function NeuronWriterTab({ neuronData, content, neuronLiveScore }: NeuronWriterT
                 Keyword: <span className="text-purple-400 font-bold">"{neuronData.keyword}"</span>
               </div>
             )}
+            {nwStatus && (
+              <div className="mt-2 text-xs text-zinc-600">
+                Query status: <span className="font-mono text-zinc-400">{nwStatus}</span>
+              </div>
+            )}
             <div className="mt-6 text-xs text-zinc-600 max-w-md">
-              <strong className="text-zinc-400">To fix:</strong> Go to{' '}
+              <strong className="text-zinc-400">To fix:</strong> Regenerate the content. The app will auto-create or re-use the NeuronWriter query.
+              If issues persist, check{' '}
               <a href="https://app.neuronwriter.com" target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">
                 app.neuronwriter.com
-              </a>, find this query, delete it, then regenerate the content.
+              </a>{' '}to ensure the query is processing correctly.
             </div>
           </div>
         </div>
@@ -1438,23 +1452,23 @@ function NeuronWriterTab({ neuronData, content, neuronLiveScore }: NeuronWriterT
           </div>
         )}
 
-        {hasStructuredData && neuronData.recommendations && (
+        {hasStructuredData && (
           <div className="mt-8 pt-6 border-t border-white/10 grid grid-cols-2 lg:grid-cols-4 gap-4 text-sm">
             <div className="bg-black/20 rounded-xl p-4 border border-white/5">
               <span className="text-[10px] uppercase tracking-wider font-bold text-zinc-500 block mb-1">Target Words</span>
-              <p className="text-white font-bold text-xl">{neuronData.recommendations.targetWordCount?.toLocaleString()}</p>
+              <p className="text-white font-bold text-xl">{neuronData.recommended_length?.toLocaleString() || '-'}</p>
             </div>
             <div className="bg-black/20 rounded-xl p-4 border border-white/5">
               <span className="text-[10px] uppercase tracking-wider font-bold text-zinc-500 block mb-1">Target Score</span>
-              <p className="text-white font-bold text-xl">{neuronData.recommendations.targetScore}%</p>
+              <p className="text-white font-bold text-xl">{neuronData.content_score || '-'}</p>
             </div>
             <div className="bg-black/20 rounded-xl p-4 border border-white/5">
-              <span className="text-[10px] uppercase tracking-wider font-bold text-zinc-500 block mb-1">Min H2 Count</span>
-              <p className="text-white font-bold text-xl">{neuronData.recommendations.minH2Count}</p>
+              <span className="text-[10px] uppercase tracking-wider font-bold text-zinc-500 block mb-1">Total Entities</span>
+              <p className="text-white font-bold text-xl">{neuronData.entities?.length || 0}</p>
             </div>
             <div className="bg-black/20 rounded-xl p-4 border border-white/5">
-              <span className="text-[10px] uppercase tracking-wider font-bold text-zinc-500 block mb-1">Min H3 Count</span>
-              <p className="text-white font-bold text-xl">{neuronData.recommendations.minH3Count}</p>
+              <span className="text-[10px] uppercase tracking-wider font-bold text-zinc-500 block mb-1">Total Terms</span>
+              <p className="text-white font-bold text-xl">{((neuronData.terms?.length || 0) + (neuronData.termsExtended?.length || 0))}</p>
             </div>
           </div>
         )}
@@ -1512,21 +1526,21 @@ function NeuronWriterTab({ neuronData, content, neuronLiveScore }: NeuronWriterT
           {/* H1 Suggestions */}
           {neuronData.h1Suggestions && neuronData.h1Suggestions.length > 0 && (
             <NeuronSection title="H1 Title Suggestions" subtitle="Recommended H1 titles from top competitors" icon={<Type className="w-5 h-5 text-amber-400" />} accentColor="amber" isExpanded={expandedSections.h1} onToggle={() => toggleSection('h1')} count={neuronData.h1Suggestions.length}>
-              <HeadingList headings={neuronData.h1Suggestions} />
+              <HeadingList headings={neuronData.h1Suggestions.map(h => ({ text: h.text, level: h.level || 'h1', relevanceScore: h.relevanceScore }))} />
             </NeuronSection>
           )}
 
           {/* H2 Suggestions (prefer h2Suggestions, fallback to headingsH2) */}
           {((neuronData.h2Suggestions && neuronData.h2Suggestions.length > 0) || (neuronData.headingsH2 && neuronData.headingsH2.length > 0)) && (
             <NeuronSection title="H2 Heading Suggestions" subtitle="Use or adapt these headings in your content" icon={<Hash className="w-5 h-5 text-emerald-400" />} accentColor="emerald" isExpanded={expandedSections.h2} onToggle={() => toggleSection('h2')} count={(neuronData.h2Suggestions?.length || neuronData.headingsH2?.length || 0)}>
-              <HeadingList headings={(neuronData.h2Suggestions || neuronData.headingsH2?.map(h => ({ text: h.text, level: 'h2' as const, relevanceScore: h.usage_pc ? Math.round(h.usage_pc * 100) : undefined }))) || []} />
+              <HeadingList headings={(neuronData.h2Suggestions?.map(h => ({ text: h.text, level: h.level || 'h2', relevanceScore: h.relevanceScore })) || neuronData.headingsH2?.map(h => ({ text: h.text, level: 'h2', relevanceScore: h.usage_pc ? Math.round(h.usage_pc * 100) : undefined }))) || []} />
             </NeuronSection>
           )}
 
           {/* H3 Suggestions (prefer h3Suggestions, fallback to headingsH3) */}
           {((neuronData.h3Suggestions && neuronData.h3Suggestions.length > 0) || (neuronData.headingsH3 && neuronData.headingsH3.length > 0)) && (
             <NeuronSection title="H3 Subheading Suggestions" subtitle="Sub-topics to cover within sections" icon={<List className="w-5 h-5 text-cyan-400" />} accentColor="cyan" isExpanded={expandedSections.h3} onToggle={() => toggleSection('h3')} count={(neuronData.h3Suggestions?.length || neuronData.headingsH3?.length || 0)}>
-              <HeadingList headings={(neuronData.h3Suggestions || neuronData.headingsH3?.map(h => ({ text: h.text, level: 'h3' as const, relevanceScore: h.usage_pc ? Math.round(h.usage_pc * 100) : undefined }))) || []} />
+              <HeadingList headings={(neuronData.h3Suggestions?.map(h => ({ text: h.text, level: h.level || 'h3', relevanceScore: h.relevanceScore })) || neuronData.headingsH3?.map(h => ({ text: h.text, level: 'h3', relevanceScore: h.usage_pc ? Math.round(h.usage_pc * 100) : undefined }))) || []} />
             </NeuronSection>
           )}
 
@@ -1821,7 +1835,7 @@ function TermGrid({ terms, content, filter }: TermGridProps) {
 
 interface NeuronWriterHeadingDataForList {
   text: string;
-  level: string;
+  level?: string;
   source?: string;
   relevanceScore?: number;
 }

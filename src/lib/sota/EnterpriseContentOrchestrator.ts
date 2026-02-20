@@ -57,9 +57,10 @@ import {
 // ─────────────────────────────────────────────────────────────────────────────
 // CONSTANTS
 // ─────────────────────────────────────────────────────────────────────────────
+
 const NW_MAX_IMPROVEMENT_ATTEMPTS = 4;
-const NW_TARGET_SCORE = 94; 
-const NW_MAX_POLL_ATTEMPTS = 150; 
+const NW_TARGET_SCORE = 94;
+const NW_MAX_POLL_ATTEMPTS = 150;
 const NW_POLL_INTERVAL_MS = 10000;
 const NW_HARD_LIMIT_MS = 600000; // 10 minutes hard limit for SOTA
 const MIN_VALID_CONTENT_LENGTH = 800;
@@ -111,9 +112,10 @@ export class EnterpriseContentOrchestrator {
   // ─────────────────────────────────────────────────────────────────────────
   // NEURONWRITER INITIALIZATION — FIXED: RESILIENT POLLING
   // ─────────────────────────────────────────────────────────────────────────
+
   private async maybeInitNeuronWriter(keyword: string, options: any): Promise<NeuronBundle | null> {
     if (!this.config.neuronWriterApiKey || !this.config.neuronWriterProjectId) return null;
-    
+
     const service = createNeuronWriterService(this.config.neuronWriterApiKey);
     const projectId = this.config.neuronWriterProjectId;
     const startTime = Date.now();
@@ -131,14 +133,13 @@ export class EnterpriseContentOrchestrator {
       }
 
       this.log(`NeuronWriter: Found query ${queryId}. Polling for analysis (Hard Limit: 10m)...`);
-      
+
       for (let i = 0; i < NW_MAX_POLL_ATTEMPTS; i++) {
         const res = await service.getQueryAnalysis(queryId);
         if (res.success && res.analysis) {
           const a = res.analysis;
           // Resilient check: Do we have terms OR entities OR a decent content score?
           const hasData = (a.terms?.length || 0) > 0 || (a.entities?.length || 0) > 0;
-          
           if (hasData) {
             this.log(`NeuronWriter: Analysis data received successfully (${a.terms?.length} terms, ${a.entities?.length} entities).`);
             return { service, queryId, analysis: a };
@@ -146,8 +147,8 @@ export class EnterpriseContentOrchestrator {
         }
 
         const elapsed = Date.now() - startTime;
-        if (elapsed > NW_HARD_LIMIT_MS) break; 
-        
+        if (elapsed > NW_HARD_LIMIT_MS) break;
+
         await new Promise(r => setTimeout(r, NW_POLL_INTERVAL_MS));
         if (i % 5 === 0) this.log(`NeuronWriter: Polling... (${Math.round(elapsed/1000)}s elapsed)`);
       }
@@ -156,34 +157,33 @@ export class EnterpriseContentOrchestrator {
       return null;
     } catch (e) {
       this.error(`NeuronWriter stage failed: ${e}`);
-      throw e; 
+      throw e;
     }
   }
 
   // ─────────────────────────────────────────────────────────────────────────
   // PREMIUM HTML STYLING — SOTA ENTERPRISE DESIGN v2
   // ─────────────────────────────────────────────────────────────────────────
+
   private async applyPremiumStyling(html: string): Promise<string> {
     let output = html;
 
     // Inject SOTA Hero with dynamic glassmorphism
     if (!output.includes('data-premium-hero')) {
       const hero = `
-<div data-premium-hero style="background: linear-gradient(165deg, #0f172a 0%, #1e293b 100%); padding: 100px 60px; border-radius: 48px; margin-bottom: 80px; color: #f8fafc; border: 1px solid rgba(255,255,255,0.08); position: relative; overflow: hidden; box-shadow: 0 40px 100px -20px rgba(0,0,0,0.5);">
-  <div style="position: absolute; top: -150px; right: -150px; width: 450px; height: 450px; background: radial-gradient(circle, rgba(56, 189, 248, 0.15) 0%, transparent 70%); filter: blur(100px); border-radius: 50%;"></div>
-  <div style="text-transform: uppercase; letter-spacing: 0.4em; font-weight: 900; color: #38bdf8; font-size: 12px; margin-bottom: 32px; opacity: 0.9;">Exclusive Strategic Insight</div>
-  <h1 style="font-size: clamp(40px, 7vw, 64px); font-weight: 900; line-height: 1.0; margin: 0 0 40px; color: #ffffff; letter-spacing: -0.04em;">\${this.config.currentTitle || 'Strategic Deep Dive'}</h1>
-  <div style="display: flex; flex-wrap: wrap; gap: 40px; align-items: center; border-top: 1px solid rgba(255,255,255,0.1); padding-top: 40px; margin-top: 40px;">
-    <div style="display: flex; align-items: center; gap: 16px;">
-      <div style="width: 52px; height: 52px; background: #38bdf8; border-radius: 16px; display: flex; align-items: center; justify-content: center; font-weight: 900; color: #0f172a; font-size: 20px;">\${this.config.authorName?.charAt(0) || 'S'}</div>
-      <div style="display: flex; flex-direction: column;">
-        <span style="font-weight: 800; font-size: 18px; color: #ffffff;">\${this.config.authorName || 'Editorial Board'}</span>
-        <span style="font-size: 14px; color: #94a3b8;">SOTA Certified Expert</span>
-      </div>
+<div data-premium-hero="true" class="sota-hero-container" style="background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%); padding: 80px 40px; border-radius: 24px; margin-bottom: 60px; color: #f8fafc; position: relative; overflow: hidden; border: 1px solid rgba(255,255,255,0.1); box-shadow: 0 25px 50px -12px rgba(0,0,0,0.5);">
+  <div style="position: absolute; top: -100px; right: -100px; width: 300px; height: 300px; background: radial-gradient(circle, rgba(56,189,248,0.15) 0%, transparent 70%);"></div>
+  <div style="text-transform: uppercase; letter-spacing: 0.1em; font-weight: 700; color: #38bdf8; margin-bottom: 16px; font-size: 14px;">Exclusive Strategic Insight</div>
+  <h1 style="font-size: 48px; line-height: 1.1; margin-bottom: 32px; font-weight: 800; background: linear-gradient(to right, #fff, #94a3b8); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">${this.config.currentTitle || 'Strategic Deep Dive'}</h1>
+  <div style="display: flex; align-items: center; gap: 20px;">
+    <div style="width: 48px; height: 48px; border-radius: 50%; background: #38bdf8; display: flex; align-items: center; justify-content: center; font-weight: 800; color: #0f172a; font-size: 20px;">${this.config.authorName?.charAt(0) || 'S'}</div>
+    <div>
+      <div style="font-weight: 600; color: #f8fafc;">${this.config.authorName || 'Editorial Board'}</div>
+      <div style="font-size: 13px; color: #94a3b8;">SOTA Certified Expert</div>
     </div>
-    <div style="display: flex; flex-direction: column; border-left: 1px solid rgba(255,255,255,0.1); padding-left: 40px;">
-      <span style="font-size: 12px; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 4px;">Release Date</span>
-      <span style="font-weight: 700; font-size: 16px; color: #f1f5f9;">\${new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}</span>
+    <div style="margin-left: auto; text-align: right;">
+      <div style="font-size: 12px; color: #64748b; text-transform: uppercase; margin-bottom: 4px;">Release Date</div>
+      <div style="font-weight: 500;">${new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}</div>
     </div>
   </div>
 </div>`;
@@ -191,16 +191,20 @@ export class EnterpriseContentOrchestrator {
     }
 
     // Advanced typography & spacing
-    output = output.replace(/<h2>/g, '<h2 style="font-size: clamp(32px, 5vw, 42px); font-weight: 900; color: #0f172a; margin: 80px 0 32px; line-height: 1.1; letter-spacing: -0.03em;">');
-    output = output.replace(/<h3>/g, '<h3 style="font-size: clamp(24px, 3.5vw, 30px); font-weight: 800; color: #1e293b; margin: 56px 0 24px; line-height: 1.2; letter-spacing: -0.01em;">');
-    output = output.replace(/<p>/g, '<p style="font-size: 20px; line-height: 1.8; color: #334155; margin-bottom: 32px; font-family: \'Inter\', system-ui, sans-serif; font-weight: 400;">');
-    
+    // This is a simplified version of what we want - real SOTA would have complex CSS injection
+    output = output.replace(/<h2>/g, '<h2 style="font-size: 32px; font-weight: 800; color: #0f172a; margin-top: 60px; margin-bottom: 24px; letter-spacing: -0.02em; border-left: 6px solid #38bdf8; padding-left: 20px;">');
+    output = output.replace(/<h3>/g, '<h3 style="font-size: 24px; font-weight: 700; color: #1e293b; margin-top: 40px; margin-bottom: 16px;">');
+    output = output.replace(/<p>/g, '<p style="font-size: 18px; line-height: 1.8; color: #334155; margin-bottom: 24px;">');
+
     // Premium List Styling
-    output = output.replace(/<ul>/g, '<ul style="margin-bottom: 40px; padding-left: 0; list-style: none;">');
-    output = output.replace(/<li>/g, '<li style="position: relative; padding-left: 40px; margin-bottom: 20px; font-size: 19px; color: #334155; line-height: 1.7;"> <span style="position: absolute; left: 0; top: 14px; width: 16px; height: 3px; background: #3b82f6; border-radius: 4px;"></span>');
+    output = output.replace(/<ul>/g, '<ul style="list-style: none; padding-left: 0; margin-bottom: 30px;">');
+    output = output.replace(/<li>/g, '<li style="position: relative; padding-left: 32px; margin-bottom: 12px; font-size: 17px; color: #334155; line-height: 1.6;">' + 
+      '<span style="position: absolute; left: 0; top: 10px; width: 12px; height: 2px; background: #38bdf8;"></span>');
 
     // Key Takeaways Box
-    output = output.replace(/<blockquote>/g, '<div style="background: #f8fafc; border-left: 6px solid #3b82f6; padding: 40px; margin: 60px 0; border-radius: 0 24px 24px 0; box-shadow: inset 0 0 40px rgba(0,0,0,0.02);"><h4 style="margin-top:0; color:#1e40af; text-transform:uppercase; letter-spacing:0.1em; font-size:14px; font-weight:900; margin-bottom:16px;">Expert Perspective</h4>');
+    output = output.replace(/<blockquote>/g, 
+      '<div style="background: #f8fafc; border-radius: 16px; padding: 40px; border: 1px solid #e2e8f0; margin: 40px 0; position: relative;">' + 
+      '<div style="position: absolute; top: -15px; left: 30px; background: #0f172a; color: #fff; padding: 4px 16px; border-radius: 20px; font-size: 12px; font-weight: 700; text-transform: uppercase;">Expert Perspective</div>');
     output = output.replace(/<\/blockquote>/g, '</div>');
 
     return output;
@@ -209,10 +213,11 @@ export class EnterpriseContentOrchestrator {
   // ─────────────────────────────────────────────────────────────────────────
   // MAIN PIPELINE
   // ─────────────────────────────────────────────────────────────────────────
-  async generateContent(options: any): Promise<GeneratedContent> {
+
+  async generateContent(options: any): Promise<any> {
     this.onProgress = options.onProgress;
-    this.log(`SOTA Pipeline v7.1 Initiated: "\${options.keyword}"`);
-    
+    this.log(`SOTA Pipeline v7.1 Initiated: "${options.keyword}"`);
+
     this.config.currentTitle = options.title || options.keyword;
     this.config.authorName = options.authorName || 'SOTA AI Board';
 
@@ -251,9 +256,9 @@ export class EnterpriseContentOrchestrator {
       content: html,
       qualityScore: { overall: 99 },
       neuronWriterAnalysis: neuron?.analysis,
-      neuronWriterQueryId: neuron?.fix(orchestrator): enhance neuronwriter polling & sota premium styling v7.1queryId,
+      neuronWriterQueryId: neuron?.queryId,
       metadata: {
-        wordCount: html.split(/\\s+/).length,
+        wordCount: html.split(/\s+/).length,
         generatedAt: new Date().toISOString(),
         engine: 'SOTA-GOD-MODE-v7.1'
       }
@@ -261,7 +266,7 @@ export class EnterpriseContentOrchestrator {
   }
 
   private async humanizeContent(html: string, keyword: string): Promise<string> {
-    const prompt = `You are a Senior Editor at a world-class publication. 
+    const prompt = `You are a Senior Editor at a world-class publication.
 POLISH the following HTML content to be indistinguishable from a human-written masterpiece.
 
 GUIDELINES:
@@ -272,7 +277,7 @@ GUIDELINES:
 5. INTEGRITY: Preserve ALL HTML tags, inline styles, and semantic structure.
 
 CONTENT:
-\${html}`;
+${html}`;
 
     const res = await this.engine.generateWithModel({
       prompt,

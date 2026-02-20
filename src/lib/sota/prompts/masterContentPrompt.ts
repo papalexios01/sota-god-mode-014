@@ -61,11 +61,13 @@ HTML ARCHITECTURE (ULTRA-PREMIUM):
 
 export function buildMasterUserPrompt(config: ContentPromptConfig): string {
   const { primaryKeyword, title, targetWordCount, neuronWriterSection, internalLinks, youtubeEmbed, authorName, contentType } = config;
-  const linksHtml = internalLinks?.length 
-    ? `INTERNAL LINKS TO INTEGRATE NATURALLY:
-${internalLinks.map(l => `- [${l.anchor}](${l.url})`).join('
-')}` 
-    : '';
+  
+  // Safe string construction for internal links to avoid build-breaking syntax errors
+  let linksHtml = '';
+  if (internalLinks && internalLinks.length > 0) {
+    const linkItems = internalLinks.map(l => `- [${l.anchor}](${l.url})`).join(' ');
+    linksHtml = `INTERNAL LINKS TO INTEGRATE NATURALLY: ${linkItems}`;
+  }
 
   return `
 TASK: Write a ${contentType} article about "${primaryKeyword}".

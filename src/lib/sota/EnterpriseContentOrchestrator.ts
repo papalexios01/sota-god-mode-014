@@ -1,12 +1,13 @@
 // src/lib/sota/EnterpriseContentOrchestrator.ts
 // ═══════════════════════════════════════════════════════════════════════════════
-// ENTERPRISE CONTENT ORCHESTRATOR v9.0 — SOTA GOD-MODE ARCHITECTURE
+// ENTERPRISE CONTENT ORCHESTRATOR v9.1 — SOTA GOD-MODE ARCHITECTURE
 //
-// NeuronWriter v9.0 changes:
-//   1. AUTO-CREATE query if keyword not found in project
-//   2. POLL until status is 'done' (not just any data)
-//   3. Use ALL NW data in prompt: basic terms, extended, entities, H2/H3
-//   4. Robust data validation — never silently return null on fixable errors
+// Pipeline phases:
+//   1. NeuronWriter Semantic Context Initialization (auto-create + poll)
+//   2. Master Content Generation (AI model)
+//   3. SOTA Humanization & Premium Design Overlay
+//   4. Internal Link Generation & Injection (4–8 contextual links)
+//   5. Schema.org Structured Data Generation
 // ═══════════════════════════════════════════════════════════════════════════════
 
 import type {
@@ -63,7 +64,6 @@ import {
 // CONSTANTS & CONFIGURATION
 // ─────────────────────────────────────────────────────────────────────────────
 
-const NW_MAX_IMPROVEMENT_ATTEMPTS = 5;
 const NW_TARGET_SCORE = 90;
 
 // Polling: wait up to 15 minutes, polling every 12 seconds
@@ -105,7 +105,12 @@ export class EnterpriseContentOrchestrator {
     this.youtubeService = createYouTubeService(config.apiKeys);
     this.referenceService = createReferenceService(config.apiKeys);
     this.linkEngine = createInternalLinkEngine(config.sitePages || []);
-    this.schemaGenerator = createSchemaGenerator(config.apiKeys, config.organizationUrl || 'https://example.com');
+    // FIX: SchemaGenerator(orgName, orgUrl, logoUrl) — never pass apiKeys here
+    this.schemaGenerator = createSchemaGenerator(
+      config.organizationName || 'Editorial Team',
+      config.organizationUrl || config.wpUrl || 'https://example.com',
+      config.logoUrl || ''
+    );
     this.eeatValidator = createEEATValidator();
   }
 
@@ -130,13 +135,6 @@ export class EnterpriseContentOrchestrator {
   // NEURONWRITER INTEGRATION v9.0 — AUTO-CREATE + FULL DATA POLLING
   // ─────────────────────────────────────────────────────────────────────────
 
-  /**
-   * Initializes NeuronWriter for the given keyword:
-   *   1. Search the configured project for an existing query matching the keyword.
-   *   2. If not found → AUTO-CREATE a new query.
-   *   3. Poll until the query status is 'done' (data is fully processed).
-   *   4. Return full analysis: basic terms, extended, entities, H2, H3.
-   */
   private async maybeInitNeuronWriter(keyword: string, options: any): Promise<NeuronBundle | null> {
     if (!this.config.neuronWriterApiKey || !this.config.neuronWriterProjectId) {
       this.warn('NeuronWriter: Skipping — API key or project ID not configured.');
@@ -195,7 +193,6 @@ export class EnterpriseContentOrchestrator {
           const a = res.analysis;
           const status = (a.status || '').toLowerCase();
 
-          // Count all data we have
           const basicCount = a.terms?.length || 0;
           const extendedCount = a.termsExtended?.length || 0;
           const entityCount = a.entities?.length || 0;
@@ -210,24 +207,20 @@ export class EnterpriseContentOrchestrator {
             );
           }
 
-          // Accept data if status is 'done'/'ready' OR if we have substantial data already
           const isReady = NW_READY_STATUSES.has(status);
           const hasSubstantialData = basicCount >= 5 || (basicCount > 0 && extendedCount > 0);
 
           if (isReady || hasSubstantialData) {
             this.log(
               `✅ NeuronWriter: Analysis ready! ` +
-              `${basicCount} basic terms, ${extendedCount} extended terms, ` +
-              `${entityCount} entities, ${h2Count} H2s, ${h3Count} H3s. ` +
-              `Score target: ${NW_TARGET_SCORE}/100`
+              `${basicCount} basic, ${extendedCount} extended, ` +
+              `${entityCount} entities, ${h2Count} H2s, ${h3Count} H3s.`
             );
             return { service, queryId, analysis: a };
           }
 
-          // Data not ready yet — wait and retry
           if (isReady && totalData === 0) {
-            this.warn(`NeuronWriter: Query is '${status}' but returned no data. May be a broken query.`);
-            // Don't break immediately — give it a few more tries
+            this.warn(`NeuronWriter: Query is '${status}' but returned no data.`);
             if (i >= 5) {
               this.warn('NeuronWriter: 5 retries with empty data on ready query. Giving up.');
               break;
@@ -254,13 +247,12 @@ export class EnterpriseContentOrchestrator {
   }
 
   // ─────────────────────────────────────────────────────────────────────────
-  // PREMIUM HTML STYLING — SOTA GOD-MODE DESIGN v3
+  // PREMIUM HTML STYLING
   // ─────────────────────────────────────────────────────────────────────────
 
   private async applyPremiumStyling(html: string): Promise<string> {
     let output = html;
 
-    // 1. SOTA HERO INJECTION (Glassmorphism + Dynamic Gradient)
     if (!output.includes('data-premium-hero')) {
       const title = this.config.currentTitle || 'Strategic Analysis';
       const author = this.config.authorName || 'Editorial Board';
@@ -283,10 +275,7 @@ export class EnterpriseContentOrchestrator {
       output = hero + output;
     }
 
-    // 2. ADVANCED BLOCK STYLING
     output = output.replace(/<blockquote>/g, '<blockquote style="border-left: 5px solid #3b82f6; background: #f8fafc; padding: 30px; margin: 40px 0; border-radius: 0 16px 16px 0; font-style: italic; font-size: 1.1em; color: #334155;">');
-
-    // 3. TABLE ENHANCEMENT
     output = output.replace(/<table>/g, '<div style="overflow-x: auto; margin: 40px 0;"><table style="width: 100%; border-collapse: collapse; font-size: 15px; text-align: left; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1);">');
     output = output.replace(/<thead>/g, '<thead style="background: #1e293b; color: white;">');
     output = output.replace(/<th>/g, '<th style="padding: 16px 20px; font-weight: 600;">');
@@ -296,12 +285,45 @@ export class EnterpriseContentOrchestrator {
   }
 
   // ─────────────────────────────────────────────────────────────────────────
+  // CONTENT HUMANIZATION
+  // ─────────────────────────────────────────────────────────────────────────
+
+  private async humanizeContent(html: string, keyword: string): Promise<string> {
+    const prompt = `You are a WORLD-CLASS EDITORIAL DIRECTOR. Polish this AI-generated HTML content into a human masterpiece.
+
+INSTRUCTIONS:
+1. DRAMATIC BURSTINESS: Combine short, sharp sentences with long, flowing insights.
+2. ELIMINATE AI-ISMS: Remove "Furthermore", "In conclusion", "It is important to note", etc.
+3. CONVERSATIONAL AUTHORITY: Inject a first-person perspective ("I found", "I've seen").
+4. PRESERVE STRUCTURE: Keep all <div>, <blockquote>, <table>, and <h3> tags exactly as they are.
+5. PRESERVE ALL KEYWORDS: Do NOT remove or change any keywords, terms, or entities already in the content.
+
+CONTENT TO POLISH:
+${html}`;
+
+    try {
+      const res = await this.engine.generateWithModel({
+        prompt,
+        model: 'anthropic',
+        apiKeys: this.config.apiKeys,
+        systemPrompt: 'You are a world-class human editor. Output ONLY the polished HTML. No commentary.',
+        temperature: 0.88
+      });
+
+      return res.content || html;
+    } catch (e) {
+      this.warn(`Humanization step failed (${e}), using raw AI output.`);
+      return html;
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
   // MAIN PIPELINE
   // ─────────────────────────────────────────────────────────────────────────
 
   async generateContent(options: any): Promise<any> {
     this.onProgress = options.onProgress;
-    this.log(`🚀 SOTA GOD-MODE PIPELINE v9.0 ENGAGED: "${options.keyword}"`);
+    this.log(`🚀 SOTA GOD-MODE PIPELINE v9.1 ENGAGED: "${options.keyword}"`);
 
     this.config.currentTitle = options.title || options.keyword;
     this.config.authorName = options.authorName || 'SOTA AI Research';
@@ -329,7 +351,6 @@ export class EnterpriseContentOrchestrator {
 
     const systemPrompt = buildMasterSystemPrompt();
 
-    // Build the NeuronWriter section — full context if available
     const neuronWriterSection = neuron
       ? neuron.service.buildFullPromptSection(neuron.analysis)
       : 'No NeuronWriter data available. Focus on comprehensive semantic coverage using LSI keywords, natural language variation, and expert-level topic coverage.';
@@ -362,16 +383,68 @@ export class EnterpriseContentOrchestrator {
     // ── Phase 3: SOTA Refinement & Aesthetics ─────────────────────────────
     this.log('Phase 3: SOTA Humanization & Premium Design Overlay...');
 
-    // Step 1: Humanization / Editorial Polish
     html = await this.humanizeContent(html, options.keyword);
-
-    // Step 2: Readability Optimization (Split walls of text)
     html = polishReadability(html);
-
-    // Step 3: Visual Identity System
     html = await this.applyPremiumStyling(html);
 
-    this.log('✅ Content Generation Complete. Finalizing Metadata.');
+    // ── Phase 4: Internal Link Generation & Injection (4–8 links) ─────────
+    this.log('Phase 4: Generating & Injecting Internal Links...');
+
+    let finalInternalLinks: InternalLink[] = [];
+
+    if (this.config.sitePages && this.config.sitePages.length > 0) {
+      this.linkEngine.updateSitePages(this.config.sitePages);
+      const generatedLinks = this.linkEngine.generateLinkOpportunities(html, 8, options.keyword);
+
+      if (generatedLinks.length > 0) {
+        html = this.linkEngine.injectContextualLinks(html, generatedLinks);
+        finalInternalLinks = generatedLinks;
+        this.log(`Phase 4 ✅ Injected ${generatedLinks.length} contextual internal links.`);
+      } else {
+        this.warn('Phase 4: No matching site pages found for internal linking. Ensure your sitemap has been loaded.');
+      }
+    } else {
+      this.warn('Phase 4: Skipping internal links — no site pages loaded. Add a Sitemap URL in the Setup tab.');
+    }
+
+    // ── Phase 5: Schema.org Structured Data ───────────────────────────────
+    this.log('Phase 5: Generating Schema.org Structured Data...');
+
+    const authorName = this.config.authorName || 'Editorial Team';
+    const siteUrl = (this.config.organizationUrl || this.config.wpUrl || 'https://example.com').replace(/\/$/, '');
+    const slug = (options.title || options.keyword).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+    const articleUrl = `${siteUrl}/${slug}/`;
+
+    const contentForSchema = {
+      title: options.title || options.keyword,
+      metaDescription: `A comprehensive guide on ${options.keyword}.`,
+      content: html,
+      generatedAt: new Date(),
+      eeat: {
+        author: {
+          name: authorName,
+          credentials: [],
+          publications: [],
+          expertiseAreas: [options.keyword],
+          socialProfiles: [],
+        },
+        citations: [],
+        expertReviews: [],
+        methodology: '',
+        lastUpdated: new Date(),
+        factChecked: true,
+      },
+    } as any;
+
+    let schema: any = { '@context': 'https://schema.org', '@graph': [] };
+    try {
+      schema = this.schemaGenerator.generateComprehensiveSchema(contentForSchema, articleUrl);
+      this.log(`Phase 5 ✅ Schema generated with ${schema['@graph']?.length || 0} entities.`);
+    } catch (e) {
+      this.warn(`Phase 5: Schema generation failed (${e}). Using empty schema.`);
+    }
+
+    this.log('✅ All phases complete. Assembling final result...');
 
     const wordCount = html.replace(/<[^>]*>/g, ' ').split(/\s+/).filter(Boolean).length;
 
@@ -381,7 +454,7 @@ export class EnterpriseContentOrchestrator {
       seoTitle: options.title || options.keyword,
       content: html,
       metaDescription: `A comprehensive guide and analysis on ${options.keyword}.`,
-      slug: (options.title || options.keyword).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, ''),
+      slug,
       primaryKeyword: options.keyword,
       secondaryKeywords: [
         ...(neuron?.analysis?.terms?.map((t: any) => t.term).slice(0, 5) || []),
@@ -398,11 +471,17 @@ export class EnterpriseContentOrchestrator {
         readabilityGrade: 8,
         estimatedReadTime: Math.ceil(wordCount / 200)
       },
-      qualityScore: calculateQualityScore(html, options.keyword, options.internalLinks || []),
-      internalLinks: options.internalLinks || [],
-      schema: { '@context': 'https://schema.org', '@graph': [] },
+      qualityScore: calculateQualityScore(html, options.keyword, finalInternalLinks.map(l => l.targetUrl)),
+      internalLinks: finalInternalLinks,
+      schema,
       eeat: {
-        author: { name: this.config.authorName || 'Editorial Team', credentials: [], publications: [], expertiseAreas: [], socialProfiles: [] },
+        author: {
+          name: authorName,
+          credentials: [],
+          publications: [],
+          expertiseAreas: [options.keyword],
+          socialProfiles: []
+        },
         citations: [],
         expertReviews: [],
         methodology: '',
@@ -413,11 +492,17 @@ export class EnterpriseContentOrchestrator {
         avgWordCount: neuron?.analysis?.recommended_length || 2000,
         recommendedWordCount: neuron?.analysis?.recommended_length || 2500,
         userIntent: 'informational',
-        commonHeadings: [...(neuron?.analysis?.headingsH2 || []).map(h => h.text), ...(neuron?.analysis?.headingsH3 || []).map(h => h.text)],
+        commonHeadings: [
+          ...(neuron?.analysis?.headingsH2 || []).map(h => h.text),
+          ...(neuron?.analysis?.headingsH3 || []).map(h => h.text)
+        ],
         contentGaps: [],
         semanticEntities: (neuron?.analysis?.entities || []).map(e => e.entity),
         topCompetitors: [],
-        recommendedHeadings: [...(neuron?.analysis?.headingsH2 || []).map(h => h.text), ...(neuron?.analysis?.headingsH3 || []).map(h => h.text)],
+        recommendedHeadings: [
+          ...(neuron?.analysis?.headingsH2 || []).map(h => h.text),
+          ...(neuron?.analysis?.headingsH3 || []).map(h => h.text)
+        ],
       },
       generatedAt: new Date(),
       model: genResult.model,
@@ -426,38 +511,6 @@ export class EnterpriseContentOrchestrator {
       neuronWriterQueryId: neuron?.queryId || null,
       telemetry: this.telemetry
     } as any;
-  }
-
-  private async humanizeContent(html: string, keyword: string): Promise<string> {
-    const prompt = `
-You are a WORLD-CLASS EDITORIAL DIRECTOR. Your task is to polish this AI-generated HTML content into a human masterpiece.
-TARGET: Indistinguishable from top-tier human journalism.
-
-INSTRUCTIONS:
-1. DRAMATIC BURSTINESS: Combine short, sharp sentences with long, flowing insights.
-2. ELIMINATE AI-ISMS: Remove "Furthermore", "In conclusion", "It is important to note", etc.
-3. CONVERSATIONAL AUTHORITY: Inject a first-person perspective ("I found", "I've seen").
-4. PRESERVE STRUCTURE: Keep all <div>, <blockquote>, <table>, and <h3> tags exactly as they are.
-5. PRESERVE ALL KEYWORDS: Do NOT remove or change any keywords, terms, or entities already in the content.
-
-CONTENT TO POLISH:
-${html}
-`;
-
-    try {
-      const res = await this.engine.generateWithModel({
-        prompt,
-        model: 'anthropic', // SOTA for editing/nuance
-        apiKeys: this.config.apiKeys,
-        systemPrompt: 'You are a world-class human editor. Output ONLY the polished HTML. No commentary.',
-        temperature: 0.88
-      });
-
-      return res.content || html;
-    } catch (e) {
-      this.warn(`Humanization step failed (${e}), using raw AI output.`);
-      return html;
-    }
   }
 }
 

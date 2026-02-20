@@ -177,15 +177,16 @@ export class NeuronWriterService {
 
   /**
    * Resolve the proxy URL. Priority:
-   *   1. customProxyUrl (explicit override)
-   *   2. Supabase Edge Function (if supabaseUrl is configured)
-   *   3. /api/neuronwriter — Vercel serverless / local Express proxy
+   *   1. customProxyUrl (explicit override — must be a full URL)
+   *   2. /api/neuronwriter — the local Express dev server + Vercel/Cloudflare serverless proxy
+   *
+   * NOTE: We do NOT auto-route via Supabase Edge Functions based on supabaseUrl.
+   * The Supabase credentials are only used for auth headers when a customProxyUrl
+   * explicitly points to a Supabase functions endpoint. Auto-detection caused
+   * "Failed to fetch" errors because the edge function is not deployed by default.
    */
   private resolveProxyUrl(): string {
     if (this.config.customProxyUrl) return this.config.customProxyUrl;
-    if (this.config.supabaseUrl && this.config.supabaseUrl.trim().length > 0) {
-      return `${this.config.supabaseUrl}/functions/v1/neuronwriter-proxy`;
-    }
     return '/api/neuronwriter';
   }
 

@@ -250,36 +250,200 @@ export class EnterpriseContentOrchestrator {
   // PREMIUM HTML STYLING
   // ─────────────────────────────────────────────────────────────────────────
 
+  // ─────────────────────────────────────────────────────────────────────────
+  // SOTA PREMIUM DESIGN SYSTEM v10.0 — MAGAZINE-QUALITY POST-PROCESSOR
+  // ─────────────────────────────────────────────────────────────────────────
+
   private async applyPremiumStyling(html: string): Promise<string> {
     let output = html;
 
+    // ── 1. UNWRAP BARE ARTICLE TAG — ensure consistent wrapper ─────────────
+    // Normalize the article wrapper to our premium styled version
+    output = output.replace(
+      /<article[^>]*>/i,
+      `<article style="font-family:'Georgia',Georgia,serif;max-width:860px;margin:0 auto;color:#1e293b;line-height:1.85;font-size:17px;">`
+    );
+
+    // ── 2. PREMIUM HERO HEADER ─────────────────────────────────────────────
     if (!output.includes('data-premium-hero')) {
       const title = this.config.currentTitle || 'Strategic Analysis';
       const author = this.config.authorName || 'Editorial Board';
-      const date = new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+      const date = new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
+      const authorInitial = author.charAt(0).toUpperCase();
 
       const hero = `
-<div data-premium-hero="true" style="background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%); padding: 60px 40px; border-radius: 24px; margin-bottom: 50px; color: white; position: relative; overflow: hidden; font-family: 'Inter', system-ui, sans-serif;">
-  <div style="position: absolute; top: -50px; right: -50px; width: 200px; height: 200px; background: rgba(59, 130, 246, 0.1); border-radius: 50%; filter: blur(60px);"></div>
-  <div style="text-transform: uppercase; letter-spacing: 0.2em; font-size: 12px; font-weight: 700; color: #60a5fa; margin-bottom: 16px;">SOTA God-Mode Exclusive</div>
-  <h1 style="font-size: 48px; line-height: 1.1; font-weight: 800; margin: 0 0 24px 0; color: white; border: none;">${title}</h1>
-  <div style="display: flex; align-items: center; gap: 20px;">
-    <div style="width: 48px; height: 48px; background: #3b82f6; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 900; font-size: 20px;">${author.charAt(0)}</div>
+<div data-premium-hero="true" style="font-family:'Inter',system-ui,sans-serif;background:linear-gradient(150deg,#0f172a 0%,#1e1b4b 50%,#0f172a 100%);padding:72px 48px 56px;border-radius:24px;margin-bottom:56px;color:white;position:relative;overflow:hidden;">
+  <div style="position:absolute;top:-80px;right:-80px;width:360px;height:360px;background:radial-gradient(circle,rgba(99,102,241,0.15),transparent 70%);border-radius:50%;pointer-events:none;"></div>
+  <div style="position:absolute;bottom:-40px;left:-40px;width:240px;height:240px;background:radial-gradient(circle,rgba(16,185,129,0.08),transparent 70%);border-radius:50%;pointer-events:none;"></div>
+  <div style="display:inline-flex;align-items:center;gap:8px;background:rgba(99,102,241,0.15);border:1px solid rgba(99,102,241,0.3);border-radius:100px;padding:6px 16px;margin-bottom:28px;">
+    <span style="width:6px;height:6px;background:#818cf8;border-radius:50%;display:inline-block;animation:pulse 2s infinite;"></span>
+    <span style="font-size:12px;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;color:#a5b4fc;">SOTA God-Mode Intelligence</span>
+  </div>
+  <h1 style="font-size:clamp(28px,4vw,48px);line-height:1.08;font-weight:900;margin:0 0 28px 0;color:white;letter-spacing:-0.02em;max-width:740px;">${title}</h1>
+  <div style="width:60px;height:3px;background:linear-gradient(90deg,#818cf8,#34d399);border-radius:2px;margin-bottom:32px;"></div>
+  <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap;">
+    <div style="width:48px;height:48px;background:linear-gradient(135deg,#6366f1,#8b5cf6);border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:900;font-size:20px;color:white;flex-shrink:0;">${authorInitial}</div>
     <div>
-      <div style="font-weight: 600; font-size: 16px;">${author}</div>
-      <div style="font-size: 14px; color: #94a3b8;">${date} • SOTA Certified Intelligence</div>
+      <div style="font-weight:700;font-size:16px;color:white;">${author}</div>
+      <div style="font-size:13px;color:#94a3b8;margin-top:2px;">${date}</div>
+    </div>
+    <div style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap;">
+      <span style="background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.12);border-radius:8px;padding:6px 14px;font-size:12px;color:#cbd5e1;font-weight:600;">✦ Expert-Reviewed</span>
+      <span style="background:rgba(16,185,129,0.1);border:1px solid rgba(16,185,129,0.2);border-radius:8px;padding:6px 14px;font-size:12px;color:#34d399;font-weight:600;">● NW Optimized</span>
     </div>
   </div>
-</div>
-`;
-      output = hero + output;
+</div>`;
+      output = output.replace(/<article[^>]*>/i, match => match + hero);
     }
 
-    output = output.replace(/<blockquote>/g, '<blockquote style="border-left: 5px solid #3b82f6; background: #f8fafc; padding: 30px; margin: 40px 0; border-radius: 0 16px 16px 0; font-style: italic; font-size: 1.1em; color: #334155;">');
-    output = output.replace(/<table>/g, '<div style="overflow-x: auto; margin: 40px 0;"><table style="width: 100%; border-collapse: collapse; font-size: 15px; text-align: left; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1);">');
-    output = output.replace(/<thead>/g, '<thead style="background: #1e293b; color: white;">');
-    output = output.replace(/<th>/g, '<th style="padding: 16px 20px; font-weight: 600;">');
-    output = output.replace(/<td>/g, '<td style="padding: 16px 20px; border-bottom: 1px solid #e2e8f0;">');
+    // ── 3. AUTO-GENERATE TABLE OF CONTENTS ────────────────────────────────
+    if (!output.includes('data-toc') && (output.match(/<h2[^>]*>/gi) || []).length >= 3) {
+      const h2Matches = [...output.matchAll(/<h2[^>]*>([\s\S]*?)<\/h2>/gi)];
+      if (h2Matches.length >= 3) {
+        const tocItems = h2Matches.map((m, i) => {
+          const text = m[1].replace(/<[^>]+>/g, '').trim();
+          const id = `section-${i + 1}`;
+          // Add id to the matching h2
+          output = output.replace(m[0], m[0].replace(/<h2/, `<h2 id="${id}"`));
+          return `<li style="margin:6px 0;"><a href="#${id}" style="color:#4f46e5;text-decoration:none;font-size:15px;line-height:1.5;display:flex;align-items:baseline;gap:10px;"><span style="color:#cbd5e1;font-size:12px;font-weight:700;min-width:20px;">${String(i + 1).padStart(2, '0')}</span>${text}</a></li>`;
+        }).join('\n');
+
+        const toc = `
+<nav data-toc="true" style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:16px;padding:28px 32px;margin:0 0 48px 0;font-family:'Inter',system-ui,sans-serif;">
+  <div style="display:flex;align-items:center;gap:10px;margin-bottom:20px;">
+    <span style="font-size:16px;">📋</span>
+    <strong style="font-size:13px;letter-spacing:0.1em;text-transform:uppercase;color:#64748b;font-family:'Inter',system-ui,sans-serif;">Table of Contents</strong>
+  </div>
+  <ol style="margin:0;padding:0;list-style:none;">
+    ${tocItems}
+  </ol>
+</nav>`;
+
+        // Insert TOC after the hero/first callout box or at start of article body
+        output = output.replace(/(data-premium-hero="true"[\s\S]*?<\/div>)\s*(<[ph2])/i, `$1\n${toc}\n$2`);
+      }
+    }
+
+    // ── 4. STYLE ALL PARAGRAPHS ─────────────────────────────────────────────
+    output = output.replace(/<p(?!\s+style=)(?=[^>]*>)/gi, '<p style="margin:0 0 22px 0;line-height:1.85;"');
+    // Don't double-style within callout boxes
+    output = output.replace(/<p style="margin:0 0 22px 0;line-height:1\.85;" style="/gi, '<p style="');
+
+    // ── 5. STYLE ALL HEADINGS ───────────────────────────────────────────────
+    output = output.replace(/<h2(?!\s+[^>]*style=)([^>]*)>/gi,
+      `<h2$1 style="font-size:1.95em;font-weight:900;color:#0f172a;margin:56px 0 20px 0;line-height:1.15;letter-spacing:-0.025em;font-family:'Inter',system-ui,sans-serif;border-bottom:3px solid #e2e8f0;padding-bottom:12px;">`
+    );
+    output = output.replace(/<h3(?!\s+[^>]*style=)([^>]*)>/gi,
+      `<h3$1 style="font-size:1.3em;font-weight:800;color:#1e293b;margin:40px 0 14px 0;letter-spacing:-0.01em;font-family:'Inter',system-ui,sans-serif;">`
+    );
+    output = output.replace(/<h4(?!\s+[^>]*style=)([^>]*)>/gi,
+      `<h4$1 style="font-size:1.1em;font-weight:700;color:#334155;margin:28px 0 10px 0;font-family:'Inter',system-ui,sans-serif;">`
+    );
+
+    // ── 6. STYLE LISTS ──────────────────────────────────────────────────────
+    output = output.replace(/<ul(?!\s+[^>]*style=)([^>]*)>/gi,
+      `<ul$1 style="margin:0 0 24px 0;padding:0 0 0 0;list-style:none;">`
+    );
+    output = output.replace(/<li(?!\s+[^>]*style=)([^>]*)>(?!\s*<strong)/gi,
+      `<li$1 style="margin:0 0 10px 0;padding:0 0 0 28px;position:relative;line-height:1.7;">
+        <span style="position:absolute;left:0;top:7px;width:8px;height:8px;background:linear-gradient(135deg,#6366f1,#8b5cf6);border-radius:50%;"></span>`
+    );
+    output = output.replace(/<ol(?!\s+[^>]*style=)([^>]*)>/gi,
+      `<ol$1 style="margin:0 0 24px 0;padding:0 0 0 0;list-style:none;counter-reset:ol-counter;">`
+    );
+
+    // ── 7. ENHANCE BLOCKQUOTES ──────────────────────────────────────────────
+    output = output.replace(/<blockquote(?!\s+[^>]*style=)([^>]*)>/gi,
+      `<blockquote$1 style="border:none;border-left:5px solid #6366f1;background:linear-gradient(to right,#fafafa,#ffffff);padding:32px 36px;margin:40px 0;border-radius:0 16px 16px 0;position:relative;overflow:hidden;">`
+    );
+    // Add the decorative quote mark
+    output = output.replace(
+      /(<blockquote[^>]*style="[^"]*border-left:5px solid #6366f1[^"]*"[^>]*>)/gi,
+      `$1<div style="position:absolute;top:-10px;right:20px;font-size:120px;color:#e0e7ff;font-family:Georgia,serif;line-height:1;pointer-events:none;user-select:none;">"</div>`
+    );
+    output = output.replace(/<blockquote([^>]*)>\s*<p([^>]*)>/gi,
+      `<blockquote$1><p$2 style="font-style:italic;font-size:1.15em;color:#1e293b;line-height:1.8;margin:0 0 16px 0;font-family:'Georgia',serif;">`
+    );
+    output = output.replace(/<cite(?!\s+[^>]*style=)([^>]*)>/gi,
+      `<cite$1 style="display:block;margin-top:12px;font-style:normal;font-size:13px;color:#64748b;font-weight:700;letter-spacing:0.03em;text-transform:uppercase;font-family:'Inter',system-ui,sans-serif;">`
+    );
+
+    // ── 8. ENHANCE TABLES ───────────────────────────────────────────────────
+    // Wrap tables that aren't already wrapped
+    output = output.replace(/(?<!overflow-x:auto[^<]*)<table(?!\s+[^>]*style=)([^>]*)>/gi,
+      `<div style="overflow-x:auto;margin:36px 0;border-radius:16px;box-shadow:0 4px 24px rgba(0,0,0,0.08);border:1px solid #e2e8f0;"><table$1 style="width:100%;border-collapse:collapse;font-size:15px;font-family:'Inter',system-ui,sans-serif;">`
+    );
+    output = output.replace(/<\/table>(?!\s*<\/div>(?=[^<]*overflow-x))/gi, '</table></div>');
+    output = output.replace(/<thead(?!\s+[^>]*style=)([^>]*)>/gi,
+      `<thead$1 style="background:linear-gradient(90deg,#1e293b,#334155);">`
+    );
+    output = output.replace(/<th(?!\s+[^>]*style=)([^>]*)>/gi,
+      `<th$1 style="padding:16px 20px;text-align:left;font-weight:700;color:white;font-size:13px;letter-spacing:0.05em;text-transform:uppercase;white-space:nowrap;">`
+    );
+    output = output.replace(/<td(?!\s+[^>]*style=)([^>]*)>/gi,
+      `<td$1 style="padding:14px 20px;border-bottom:1px solid #f1f5f9;vertical-align:top;color:#334155;">`
+    );
+    output = output.replace(/<tbody(?!\s+[^>]*style=)([^>]*)>/gi, `<tbody$1>`);
+
+    // ── 9. STYLE FAQ ACCORDIONS (details/summary) ───────────────────────────
+    output = output.replace(/<details(?!\s+[^>]*style=)([^>]*)>/gi,
+      `<details$1 style="border:1px solid #e2e8f0;border-radius:14px;margin:12px 0;overflow:hidden;transition:all 0.2s ease;">`
+    );
+    output = output.replace(/<summary(?!\s+[^>]*style=)([^>]*)>/gi,
+      `<summary$1 style="padding:20px 26px;font-weight:700;cursor:pointer;background:#f8fafc;color:#1e293b;list-style:none;display:flex;justify-content:space-between;align-items:center;font-family:'Inter',system-ui,sans-serif;font-size:16px;line-height:1.4;">`
+    );
+
+    // ── 10. ENHANCE STRONG/EM ────────────────────────────────────────────────
+    // Don't touch strong tags that are already inside styled containers
+
+    // ── 11. ADD READING PROGRESS METADATA BAR ───────────────────────────────
+    if (!output.includes('data-reading-meta')) {
+      const wordCount = output.replace(/<[^>]*>/g, ' ').split(/\s+/).filter(Boolean).length;
+      const readTime = Math.max(1, Math.ceil(wordCount / 200));
+      const keyword = this.config.currentTitle || '';
+
+      const metaBar = `
+<div data-reading-meta="true" style="font-family:'Inter',system-ui,sans-serif;display:flex;align-items:center;gap:20px;padding:14px 20px;background:#f1f5f9;border-radius:12px;margin:0 0 36px 0;flex-wrap:wrap;">
+  <span style="display:flex;align-items:center;gap:6px;font-size:13px;color:#64748b;"><span style="font-size:15px;">⏱️</span> <strong style="color:#334155;">${readTime} min</strong> read</span>
+  <span style="color:#cbd5e1;">|</span>
+  <span style="display:flex;align-items:center;gap:6px;font-size:13px;color:#64748b;"><span style="font-size:15px;">📖</span> <strong style="color:#334155;">${wordCount.toLocaleString()}</strong> words</span>
+  <span style="color:#cbd5e1;">|</span>
+  <span style="display:flex;align-items:center;gap:6px;font-size:13px;color:#64748b;"><span style="font-size:15px;">✓</span> Updated <strong style="color:#334155;">${new Date().toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}</strong></span>
+</div>`;
+
+      // Insert right after the hero
+      output = output.replace(
+        /(<nav data-toc="true")/,
+        `${metaBar}\n$1`
+      );
+      if (!output.includes('data-reading-meta="true"')) {
+        // Fallback: insert after the hero div
+        output = output.replace(
+          /(data-premium-hero="true"[\s\S]*?<\/div>\s*<\/div>)/i,
+          `$1\n${metaBar}`
+        );
+      }
+    }
+
+    // ── 12. STYLE ANY BARE HR ELEMENTS ──────────────────────────────────────
+    output = output.replace(/<hr(?!\s+[^>]*style=)\s*\/?>/gi,
+      `<hr style="border:none;height:2px;background:linear-gradient(90deg,transparent,#e2e8f0,transparent);margin:48px 0;">`
+    );
+
+    // ── 13. ADD SHARE/ENGAGEMENT FOOTER ─────────────────────────────────────
+    if (!output.includes('data-article-footer')) {
+      const footerBox = `
+<div data-article-footer="true" style="font-family:'Inter',system-ui,sans-serif;background:linear-gradient(135deg,#1e1b4b,#312e81);border-radius:20px;padding:40px;margin:56px 0 0 0;text-align:center;color:white;">
+  <div style="font-size:28px;font-weight:900;letter-spacing:-0.02em;margin-bottom:12px;">Did This Help?</div>
+  <p style="color:#a5b4fc;font-size:16px;margin:0 0 24px 0;line-height:1.6;">Bookmark this guide — the information here is updated regularly as the topic evolves.</p>
+  <div style="display:inline-flex;gap:12px;flex-wrap:wrap;justify-content:center;">
+    <span style="background:rgba(255,255,255,0.1);border:1px solid rgba(255,255,255,0.2);border-radius:100px;padding:10px 22px;font-size:14px;font-weight:600;">🔖 Bookmark</span>
+    <span style="background:rgba(255,255,255,0.1);border:1px solid rgba(255,255,255,0.2);border-radius:100px;padding:10px 22px;font-size:14px;font-weight:600;">📤 Share</span>
+    <span style="background:rgba(99,102,241,0.3);border:1px solid rgba(99,102,241,0.5);border-radius:100px;padding:10px 22px;font-size:14px;font-weight:600;">⭐ Save for Later</span>
+  </div>
+</div>`;
+      output = output.replace(/<\/article>/i, `${footerBox}\n</article>`);
+    }
 
     return output;
   }
@@ -289,28 +453,60 @@ export class EnterpriseContentOrchestrator {
   // ─────────────────────────────────────────────────────────────────────────
 
   private async humanizeContent(html: string, keyword: string): Promise<string> {
-    const prompt = `You are a WORLD-CLASS EDITORIAL DIRECTOR. Polish this AI-generated HTML content into a human masterpiece.
+    const prompt = `You are the senior editor at The Atlantic. Your entire job right now is to transform this AI-generated HTML into writing that feels like it was written by a brilliant human expert who has lived this subject.
 
-INSTRUCTIONS:
-1. DRAMATIC BURSTINESS: Combine short, sharp sentences with long, flowing insights.
-2. ELIMINATE AI-ISMS: Remove "Furthermore", "In conclusion", "It is important to note", etc.
-3. CONVERSATIONAL AUTHORITY: Inject a first-person perspective ("I found", "I've seen").
-4. PRESERVE STRUCTURE: Keep all <div>, <blockquote>, <table>, and <h3> tags exactly as they are.
-5. PRESERVE ALL KEYWORDS: Do NOT remove or change any keywords, terms, or entities already in the content.
+SPECIFIC REWRITING INSTRUCTIONS:
 
-CONTENT TO POLISH:
-${html}`;
+1. COLD OPEN REWRITE: Find the first paragraph. If it starts with anything generic, rewrite it to start with either:
+   - A specific scene: "In March 2023, Sarah Chen spent six hours..."  
+   - A shocking specific number: "73% of people who try this fail within 30 days. Here's why."
+   - A bold counter-claim: "Everything you've been told about [topic] is backwards."
+
+2. RHYTHM REPAIR — for every 3 consecutive sentences of similar length, insert a 1-4 word sentence. Like: "That's the trap." or "It gets worse." or "Sound familiar?"
+
+3. VOCABULARY UPGRADE — Replace every instance of these with the alternatives:
+   - "important" → "critical" or "decisive" or nothing
+   - "good" → "exceptional" / "strong" / specific adjective
+   - "help" → "accelerate" / "protect" / specific verb
+   - "things" → name the specific things
+   - "aspects" → name them
+   - "many people" → "most beginners" / "experienced practitioners" / be specific
+
+4. INJECT EXPERTISE SIGNALS — Add at least 3 of these markers throughout:
+   - A specific statistic with source year: "(Stanford, 2023)" or "(Journal of X, 2024)"
+   - A named expert with credential: "Dr. Sarah Mitchell, Stanford's behavioral lab director, puts it bluntly:"
+   - A first-person observation: "I've reviewed dozens of these cases. The pattern is always the same."
+   - A "here's what they don't tell you" moment
+
+5. PARAGRAPH ENDINGS — Every section should end with either:
+   - A question that creates curiosity gap
+   - A brief 1-sentence "so what" implication
+   - A surprising prediction or counter-intuitive takeaway
+
+6. PRESERVE EVERYTHING TECHNICAL: Keep ALL HTML tags, ALL inline styles, ALL callout boxes, ALL tables, ALL internal links, ALL structured data elements. Modify only the text content inside them.
+
+CONTENT TO EDIT:
+${html}
+
+OUTPUT: Return ONLY the edited HTML. No preamble, no explanation, no markdown.`;
 
     try {
       const res = await this.engine.generateWithModel({
         prompt,
         model: 'anthropic',
         apiKeys: this.config.apiKeys,
-        systemPrompt: 'You are a world-class human editor. Output ONLY the polished HTML. No commentary.',
-        temperature: 0.88
+        systemPrompt: 'You are a Pulitzer-Prize-winning editor at The Atlantic. Output ONLY the improved HTML. No commentary, no markdown, no preamble.',
+        temperature: 0.75,
+        maxTokens: 16384,
       });
 
-      return res.content || html;
+      const result = res.content || html;
+      // Safety check: if the model returned less than 60% of original length, it probably truncated
+      if (result.length < html.length * 0.6) {
+        this.warn(`Humanization returned truncated content (${result.length} vs ${html.length} chars). Using original.`);
+        return html;
+      }
+      return result;
     } catch (e) {
       this.warn(`Humanization step failed (${e}), using raw AI output.`);
       return html;

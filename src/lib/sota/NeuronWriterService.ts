@@ -261,3 +261,13 @@ export function createNeuronWriterService(apiKeyOrConfig: string | NeuronWriterP
   }
   return new NeuronWriterService(apiKeyOrConfig);
 }
+
+export function scoreContentAgainstNeuron(html: string, terms: NeuronWriterTermData[]): number {
+  if (!html || !terms?.length) return 0;
+  const text = html.replace(/<[^>]*>/g, ' ').toLowerCase();
+  let found = 0;
+  terms.forEach(t => {
+    if (text.includes(t.term.toLowerCase())) found++;
+  });
+  return Math.round((found / terms.length) * 100);
+}

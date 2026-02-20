@@ -1,10 +1,6 @@
 // src/lib/sota/NeuronWriterService.ts
 // ═══════════════════════════════════════════════════════════════════════════════
-// NEURONWRITER SERVICE v7.4 — ENTERPRISE RESILIENCE & AUTO-HEALING ENGINE
-// FIXED: createNeuronWriterService now falls back to reading the Supabase URL
-//        from the 'wp-optimizer-storage' local storage state if env vars are missing.
-//        This prevents HTTP 405 errors when Cloudflare Pages attempts to route
-//        a relative POST request to the local static assets.
+// NEURONWRITER SERVICE v7.2 — ENTERPRISE RESILIENCE & AUTO-HEALING ENGINE
 // ═══════════════════════════════════════════════════════════════════════════════
 
 export interface NeuronWriterProxyConfig {
@@ -68,7 +64,7 @@ export interface NeuronWriterProject {
 
 const MAX_RETRIES = 3;
 const INITIAL_RETRY_DELAY_MS = 1000;
-const PERSISTENT_CACHE_KEY = 'sota-nw-dedup-cache-v7.4';
+const PERSISTENT_CACHE_KEY = 'sota-nw-dedup-cache-v7.2';
 
 function levenshteinDistance(a: string, b: string): number {
   const m = a.length, n = b.length;
@@ -122,38 +118,7 @@ function findInPersistentCache(keyword: string): NeuronWriterQuery | undefined {
 }
 
 export class NeuronWriterService {
-  private config: NeuronWriterProxyConfig;
-
-  constructor(configOrApiKey: NeuronWriterProxyConfig | string) {
-    // Support both object config and legacy string (API key only) usage
-    if (typeof configOrApiKey === 'string') {
-      let supabaseUrl = typeof import.meta !== 'undefined' ? (import.meta.env?.VITE_SUPABASE_URL ?? '') : '';
-      let supabaseAnonKey = typeof import.meta !== 'undefined' ? (import.meta.env?.VITE_SUPABASE_ANON_KEY ?? '') : '';
-
-      // Fallback: Attempt to load from the Zustand persisted store
-      if (typeof localStorage !== 'undefined') {
-        try {
-          const stored = localStorage.getItem('wp-optimizer-storage');
-          if (stored) {
-            const parsed = JSON.parse(stored);
-            const stateConfig = parsed?.state?.config;
-            if (stateConfig?.supabaseUrl) supabaseUrl = stateConfig.supabaseUrl;
-            if (stateConfig?.supabaseAnonKey) supabaseAnonKey = stateConfig.supabaseAnonKey;
-          }
-        } catch (e) {
-          // Ignore parse errors
-        }
-      }
-
-      this.config = {
-        neuronWriterApiKey: configOrApiKey,
-        supabaseUrl,
-        supabaseAnonKey,
-      };
-    } else {
-      this.config = configOrApiKey;
-    }
-  }
+  constructor(private config: NeuronWriterProxyConfig) {}
 
   private diag(msg: string) {
     console.log(`[NeuronWriter] ${msg}`);
@@ -169,14 +134,14 @@ export class NeuronWriterService {
     for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
       try {
         const url = this.config.customProxyUrl || `${this.config.supabaseUrl}/functions/v1/neuronwriter-proxy`;
-
-        // Build headers — always include X-NW-Endpoint and, when available, X-NW-Api-Key
+        
         const headers: Record<string, string> = {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${this.config.supabaseAnonKey}`,
-          'X-NW-Endpoint': endpoint,
+          'X-NW-Endpoint': endpoint
         };
-
+        
+        // Inject the API key into the headers for the proxy
         if (this.config.neuronWriterApiKey) {
           headers['X-NW-Api-Key'] = this.config.neuronWriterApiKey;
         }
@@ -293,13 +258,14 @@ export class NeuronWriterService {
   }
 }
 
-/**
- * Factory — accepts either a plain API key string OR a full NeuronWriterProxyConfig object.
- *
- * FIX v7.4: Now safely recovers supabaseUrl/Key from localStorage if import.meta.env
- * is empty, preventing HTTP 405 errors (which occur when the URL defaults to a local path).
- */
-export function createNeuronWriterService(apiKeyOrConfig: string | NeuronWriterProxyConfig): NeuronWriterService {
+export function createNeuronWriterService(apiKeyOrConfig: string | NeuronWriterProxyConfig) {
+  if (typeof apiKeyOrConfig === 'string') {
+    return new NeuronWriterService({
+      neuronWriterApiKey: apiKeyOrConfig,
+      supabaseUrl: import.meta.env.VITE_SUPABASE_URL,
+      supabaseAnonKey: import.meta.env.VITE_SUPABASE_ANON_KEY
+    });
+  }
   return new NeuronWriterService(apiKeyOrConfig);
 }
 

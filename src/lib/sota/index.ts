@@ -2,7 +2,7 @@
 // SOTA Content Engine — Enterprise Barrel Export v3.3 (All exports verified)
 
 // ─── Core Types ──────────────────────────────────────────────────────────────────────────────
-Export type {
+export type {
   GeneratedContent,
   QualityScore,
   ContentMetrics,

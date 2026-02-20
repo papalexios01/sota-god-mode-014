@@ -1,6 +1,6 @@
 // src/lib/sota/prompts/masterContentPrompt.ts
 // ═══════════════════════════════════════════════════════════════════════════════
-// SOTA MASTER PROMPT v8.0 — GOD-MODE HUMAN-GRADE CONTENT ENGINE
+// SOTA MASTER PROMPT v8.2 — GOD-MODE HUMAN-GRADE CONTENT ENGINE
 // ═══════════════════════════════════════════════════════════════════════════════
 
 export interface ContentPromptConfig {
@@ -22,7 +22,7 @@ export interface ContentPromptConfig {
   tone?: string;
   targetAudience?: string;
   authorName?: string;
-  existingContent?: string; // For refresh type
+  existingContent?: string;
 }
 
 const BANNED_PHRASES = [
@@ -32,13 +32,13 @@ const BANNED_PHRASES = [
   "It's worth mentioning", "In the ever-evolving world", "Whether you're a beginner or expert",
   "Look no further", "game-changer", "unlock the power of", "at the end of the day",
   "it goes without saying", "the bottom line is", "in a nutshell", "last but not least",
-  "having said that", "when it comes to", "as we all know", "revolutionary", "cutting-edge",
-  "seamlessly", "dive deeper", "elevate", "harness", "tapestry", "delve"
+  "having said that", "when it comes to", "as we all know", "revolutionary",
+  "cutting-edge", "seamlessly", "dive deeper", "elevate", "harness", "tapestry", "delve"
 ];
 
 export function buildMasterSystemPrompt(): string {
   return `
-You are a WORLD-CLASS EDITORIAL DIRECTOR and SUBJECT MATTER EXPERT. 
+You are a WORLD-CLASS EDITORIAL DIRECTOR and SUBJECT MATTER EXPERT.
 Your writing style is indistinguishable from top-tier publications like Wired, The Atlantic, or Harvard Business Review.
 
 CRITICAL DIRECTIVES FOR 1000% HUMAN QUALITY:
@@ -60,48 +60,40 @@ HTML ARCHITECTURE (ULTRA-PREMIUM):
 }
 
 export function buildMasterUserPrompt(config: ContentPromptConfig): string {
-  const { 
-    primaryKeyword, 
-    title, 
-    targetWordCount, 
-    neuronWriterSection,
-    internalLinks,
-    youtubeEmbed,
-    authorName,
-    contentType
-  } = config;
-
+  const { primaryKeyword, title, targetWordCount, neuronWriterSection, internalLinks, youtubeEmbed, authorName, contentType } = config;
   const linksHtml = internalLinks?.length 
-    ? \`INTERNAL LINKS TO INTEGRATE NATURALLY:\\n\${internalLinks.map(l => \`- [\${l.anchor}](\${l.url})\`).join('\\n')}\`
+    ? `INTERNAL LINKS TO INTEGRATE NATURALLY:
+${internalLinks.map(l => `- [${l.anchor}](${l.url})`).join('
+')}` 
     : '';
 
-  return \`
-TASK: Write a \${contentType} article about "\${primaryKeyword}".
-TITLE: \${title}
-TARGET LENGTH: \${targetWordCount}+ words.
-AUTHOR: \${authorName || 'Staff Writer'}
+  return `
+TASK: Write a ${contentType} article about "${primaryKeyword}".
+TITLE: ${title}
+TARGET LENGTH: ${targetWordCount}+ words.
+AUTHOR: ${authorName || 'Staff Writer'}
 
-\${linksHtml}
+${linksHtml}
 
 NEURONWRITER SEMANTIC REQUIREMENTS:
-\${neuronWriterSection || 'None provided. Focus on natural semantic coverage using LSI keywords.'}
+${neuronWriterSection || 'None provided. Focus on natural semantic coverage using LSI keywords.'}
 
 YOUTUBE INTEGRATION:
-\${youtubeEmbed ? \`Embed this video naturally: https://www.youtube.com/watch?=\${youtubeEmbed.videoId} (\${youtubeEmbed.title})\` : 'None'}
+${youtubeEmbed ? `Embed this video naturally: https://www.youtube.com/watch?v=${youtubeEmbed.videoId} (${youtubeEmbed.title})` : 'None'}
 
 STRUCTURE:
-1. PREMIUM HERO: Start with a <div> hero section (handled by orchestrator, but provide a 1-sentence bold hook).
+1. PREMIUM HERO: Start with a <div data-premium-hero> hero section (handled by orchestrator, but provide a 1-sentence bold hook).
 2. EXECUTIVE SUMMARY: A "Key Takeaways" box (Styled <div>) with 3 bullet points.
 3. CONTENT BODY: Use H2/H3 hierarchy. Every 400 words, inject a "Visual Break" (Case Study, Pro Tip, or Statistic Box).
 4. FAQ: Include a 5-question FAQ section using H2 and bolded questions.
 5. CONCLUSION: A "Final Thoughts" section (No "In conclusion").
 
 MANDATORY STYLE:
-- Wrap the entire post in <article data-sota-premium="true">.
+- Wrap the entire post in <article>.
 - Use <p> tags for all paragraphs.
 - Integrate internal links using natural anchors. Do not use "Click here".
 - PURE HTML ONLY. NO MARKDOWN. NO CODE BLOCKS AROUND THE CONTENT.
-\`;
+`;
 }
 
 export default { buildMasterSystemPrompt, buildMasterUserPrompt };

@@ -425,22 +425,23 @@ export class NeuronWriterService {
     const lines: string[] = [];
 
     lines.push('═══════════════════════════════════════════════════════════════');
-    lines.push('NEURONWRITER SEO OPTIMIZATION — MANDATORY COMPLIANCE REQUIRED');
-    lines.push('TARGET: NeuronWriter Content Score ≥ 90 | SEO Score ≥ 90');
-    lines.push(`Keyword: ${analysis.keyword || 'N/A'}`);
-    lines.push(`Recommended Word Count: ${analysis.recommended_length || 2500}+ words`);
-    lines.push(`Content Score Target: ${analysis.content_score || 90}/100`);
+    lines.push('🔴 NEURONWRITER SEO DATA — NON-NEGOTIABLE COMPLIANCE');
     lines.push('═══════════════════════════════════════════════════════════════');
+    lines.push(`Target Keyword: "${analysis.keyword || 'N/A'}"`);
+    lines.push(`Recommended Word Count: ${analysis.recommended_length || 2500}+ words`);
+    lines.push(`Target Content Score: ≥90/100`);
     lines.push('');
 
-    // Basic (required) terms
+    // Basic (required) terms — with EXACT frequency targets
     const basicTerms = analysis.terms || analysis.basicKeywords || [];
     if (basicTerms.length > 0) {
-      lines.push('🔴 BASIC KEYWORDS (MANDATORY — use ALL of these naturally):');
-      lines.push('Each term must appear in the content at the recommended frequency.');
+      lines.push('🔴 BASIC KEYWORDS — MANDATORY (you MUST use ALL of these):');
+      lines.push('These are the PRIMARY ranking terms. Missing even one drops your score significantly.');
+      lines.push('');
       const basicList = basicTerms.slice(0, 60).map(t => {
         const freq = t.recommended || t.frequency || 1;
-        return `  • "${t.term}" (use ${freq}x minimum)`;
+        const min = Math.max(1, freq);
+        return `  ✦ "${t.term}" — use EXACTLY ${min}x (${t.weight > 1 ? 'HIGH weight' : 'standard'})`;
       });
       lines.push(basicList.join('\n'));
       lines.push('');
@@ -449,10 +450,12 @@ export class NeuronWriterService {
     // Extended terms
     const extTerms = analysis.termsExtended || analysis.extendedKeywords || [];
     if (extTerms.length > 0) {
-      lines.push('🟡 EXTENDED KEYWORDS (HIGH PRIORITY — use as many as possible naturally):');
+      lines.push('🟡 EXTENDED KEYWORDS — HIGH PRIORITY (use 85%+ of these):');
+      lines.push('These semantic variations boost topical authority. Weave them naturally throughout.');
+      lines.push('');
       const extList = extTerms.slice(0, 60).map(t => {
         const freq = t.recommended || t.frequency || 1;
-        return `  • "${t.term}" (use ${freq}x)`;
+        return `  ◆ "${t.term}" — use ${freq}x`;
       });
       lines.push(extList.join('\n'));
       lines.push('');
@@ -461,8 +464,12 @@ export class NeuronWriterService {
     // Named entities
     const entities = analysis.entities || [];
     if (entities.length > 0) {
-      lines.push('🟢 NAMED ENTITIES (Include these in content — they boost topical authority):');
-      const entityList = entities.slice(0, 30).map(e => `  • ${e.entity}`);
+      lines.push('🟢 NAMED ENTITIES — REQUIRED (reference each one in context):');
+      lines.push('Include these real-world names/things to demonstrate topical expertise.');
+      lines.push('');
+      const entityList = entities.slice(0, 30).map(e =>
+        `  ● ${e.entity}${e.frequency ? ` (mention ${e.frequency}x)` : ''}`
+      );
       lines.push(entityList.join('\n'));
       lines.push('');
     }
@@ -470,8 +477,9 @@ export class NeuronWriterService {
     // Competitor H2 headings
     const h2s = analysis.headingsH2 || analysis.h2Suggestions || [];
     if (h2s.length > 0) {
-      lines.push('📋 COMPETITOR H2 HEADINGS (Inspiration — adapt, don\'t copy verbatim):');
-      const h2List = h2s.slice(0, 15).map(h => `  • ${h.text}`);
+      lines.push('📋 COMPETITOR H2 HEADINGS — your H2s must cover these SAME topics:');
+      lines.push('(Adapt and improve them, don\'t copy verbatim)');
+      const h2List = h2s.slice(0, 15).map(h => `  → ${h.text}`);
       lines.push(h2List.join('\n'));
       lines.push('');
     }
@@ -479,19 +487,28 @@ export class NeuronWriterService {
     // Competitor H3 headings
     const h3s = analysis.headingsH3 || analysis.h3Suggestions || [];
     if (h3s.length > 0) {
-      lines.push('📋 COMPETITOR H3 HEADINGS (Inspiration — adapt, don\'t copy verbatim):');
-      const h3List = h3s.slice(0, 15).map(h => `  • ${h.text}`);
+      lines.push('📋 COMPETITOR H3 HEADINGS — use as sub-section inspiration:');
+      const h3List = h3s.slice(0, 15).map(h => `  → ${h.text}`);
       lines.push(h3List.join('\n'));
       lines.push('');
     }
 
-    lines.push('CRITICAL INSTRUCTIONS:');
-    lines.push('1. Use ALL basic keywords at least the recommended number of times throughout the article.');
-    lines.push('2. Use as many extended keywords as possible — aim for 80%+ coverage.');
-    lines.push('3. Reference every named entity at least once, in a contextually relevant way.');
-    lines.push('4. Structure your H2/H3 headings to cover the topics shown in competitor headings.');
-    lines.push('5. Ensure natural density — never keyword-stuff. Work them into sentences organically.');
-    lines.push('6. Content quality MUST yield a NeuronWriter score ≥ 90 and SEO score ≥ 90.');
+    // Summary stats
+    const totalBasic = basicTerms.length;
+    const totalExt = extTerms.length;
+    const totalEntities = entities.length;
+    lines.push('─── SCORING SUMMARY ───');
+    lines.push(`Total basic keywords: ${totalBasic} (must use 100%)`);
+    lines.push(`Total extended keywords: ${totalExt} (must use 85%+)`);
+    lines.push(`Total entities: ${totalEntities} (must reference all)`);
+    lines.push(`Total H2 topics to cover: ${h2s.length}`);
+    lines.push('');
+    lines.push('INTEGRATION RULES:');
+    lines.push('1. Work every term into a real sentence — never keyword-stuff.');
+    lines.push('2. Spread terms across ALL sections — not clustered in one area.');
+    lines.push('3. Use exact phrasing where possible (not just partial matches).');
+    lines.push('4. Higher-weight terms should appear in headings AND body text.');
+    lines.push('5. Entities should appear in expert citations or factual statements.');
     lines.push('═══════════════════════════════════════════════════════════════');
 
     return lines.join('\n');

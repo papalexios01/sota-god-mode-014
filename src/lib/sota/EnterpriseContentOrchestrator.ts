@@ -58,7 +58,7 @@ import {
   type NeuronWriterAnalysis,
   type NeuronWriterQuery,
 } from './NeuronWriterService';
-import ContentPostProcessor, { removeAIPatterns, postProcessContent } from './ContentPostProcessor';
+import ContentPostProcessor, { removeAIPatterns, postProcessContent, injectMissingTerms } from './ContentPostProcessor';
 import {
   buildMasterSystemPrompt,
   buildMasterUserPrompt,
@@ -472,7 +472,7 @@ export class EnterpriseContentOrchestrator {
     // Normalize the article wrapper to our premium styled version
     output = output.replace(
       /<article[^>]*>/i,
-      `<article style="font-family:'Georgia',Georgia,serif;max-width:860px;margin:0 auto;color:#1e293b;line-height:1.85;font-size:17px;">`
+      `<article style="font-family:'Georgia','Times New Roman',serif;max-width:860px;margin:0 auto;color:#1e293b;line-height:1.85;font-size:17.5px;letter-spacing:-0.01em;padding:0 20px;">`
     );
 
     // ── 2. PREMIUM HERO HEADER ─────────────────────────────────────────────
@@ -659,69 +659,74 @@ export class EnterpriseContentOrchestrator {
     return output;
   }
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // CONTENT HUMANIZATION
-  // ─────────────────────────────────────────────────────────────────────────
-
   private async humanizeContent(html: string, keyword: string): Promise<string> {
-    const prompt = `You are the senior editor at The Atlantic. Your entire job right now is to transform this AI-generated HTML into writing that feels like it was written by a brilliant human expert who has lived this subject.
+    // Fast LOCAL humanization — no second AI call, no truncation risk.
+    // Applies anti-AI text fixes directly to the HTML content.
+    let result = html;
 
-SPECIFIC REWRITING INSTRUCTIONS:
+    // 1. Replace stiff AI transition words with natural ones
+    const transitionReplacements: [RegExp, string[]][] = [
+      [/\bFurthermore,?\s/gi, ["But here's the thing: ", "And ", ""]],
+      [/\bMoreover,?\s/gi, ["Plus, ", "On top of that, ", ""]],
+      [/\bAdditionally,?\s/gi, ["Also — ", "And ", ""]],
+      [/\bConsequently,?\s/gi, ["So ", "Which means ", "The result? "]],
+      [/\bNevertheless,?\s/gi, ["Still, ", "But ", "Even so, "]],
+      [/\bHowever,?\s/gi, ["But ", "That said, ", "Here's the catch: "]],
+      [/\bIn conclusion,?\s/gi, ["Bottom line: ", "Here's my take: ", "So where does that leave us? "]],
+    ];
 
-1. COLD OPEN REWRITE: Find the first paragraph. If it starts with anything generic, rewrite it to start with either:
-   - A specific scene: "In March 2023, Sarah Chen spent six hours..."  
-   - A shocking specific number: "73% of people who try this fail within 30 days. Here's why."
-   - A bold counter-claim: "Everything you've been told about [topic] is backwards."
-
-2. RHYTHM REPAIR — for every 3 consecutive sentences of similar length, insert a 1-4 word sentence. Like: "That's the trap." or "It gets worse." or "Sound familiar?"
-
-3. VOCABULARY UPGRADE — Replace every instance of these with the alternatives:
-   - "important" → "critical" or "decisive" or nothing
-   - "good" → "exceptional" / "strong" / specific adjective
-   - "help" → "accelerate" / "protect" / specific verb
-   - "things" → name the specific things
-   - "aspects" → name them
-   - "many people" → "most beginners" / "experienced practitioners" / be specific
-
-4. INJECT EXPERTISE SIGNALS — Add at least 3 of these markers throughout:
-   - A specific statistic with source year: "(Stanford, 2023)" or "(Journal of X, 2024)"
-   - A named expert with credential: "Dr. Sarah Mitchell, Stanford's behavioral lab director, puts it bluntly:"
-   - A first-person observation: "I've reviewed dozens of these cases. The pattern is always the same."
-   - A "here's what they don't tell you" moment
-
-5. PARAGRAPH ENDINGS — Every section should end with either:
-   - A question that creates curiosity gap
-   - A brief 1-sentence "so what" implication
-   - A surprising prediction or counter-intuitive takeaway
-
-6. PRESERVE EVERYTHING TECHNICAL: Keep ALL HTML tags, ALL inline styles, ALL callout boxes, ALL tables, ALL internal links, ALL structured data elements. Modify only the text content inside them.
-
-CONTENT TO EDIT:
-${html}
-
-OUTPUT: Return ONLY the edited HTML. No preamble, no explanation, no markdown.`;
-
-    try {
-      const res = await this.engine.generateWithModel({
-        prompt,
-        model: 'anthropic',
-        apiKeys: this.config.apiKeys,
-        systemPrompt: 'You are a Pulitzer-Prize-winning editor at The Atlantic. Output ONLY the improved HTML. No commentary, no markdown, no preamble.',
-        temperature: 0.75,
-        maxTokens: 16384,
+    let replIdx = 0;
+    for (const [pattern, alternatives] of transitionReplacements) {
+      result = result.replace(pattern, () => {
+        const pick = alternatives[replIdx % alternatives.length];
+        replIdx++;
+        return pick;
       });
-
-      const result = res.content || html;
-      // Safety check: if the model returned less than 60% of original length, it probably truncated
-      if (result.length < html.length * 0.6) {
-        this.warn(`Humanization returned truncated content (${result.length} vs ${html.length} chars). Using original.`);
-        return html;
-      }
-      return result;
-    } catch (e) {
-      this.warn(`Humanization step failed (${e}), using raw AI output.`);
-      return html;
     }
+
+    // 2. Force contractions for natural English
+    const contractions: [RegExp, string][] = [
+      [/\bdo not\b/gi, "don't"],
+      [/\bDo not\b/g, "Don't"],
+      [/\bcannot\b/gi, "can't"],
+      [/\bCannot\b/g, "Can't"],
+      [/\bwill not\b/gi, "won't"],
+      [/\bWill not\b/g, "Won't"],
+      [/\bit is\b/gi, "it's"],
+      [/\bthat is\b/gi, "that's"],
+      [/\bthey are\b/gi, "they're"],
+      [/\bwe are\b/gi, "we're"],
+      [/\byou are\b/gi, "you're"],
+      [/\bshould not\b/gi, "shouldn't"],
+      [/\bwould not\b/gi, "wouldn't"],
+      [/\bcould not\b/gi, "couldn't"],
+      [/\bI have\b/g, "I've"],
+      [/\bthey have\b/gi, "they've"],
+      [/\byou will\b/gi, "you'll"],
+    ];
+    for (const [pat, rep] of contractions) {
+      result = result.replace(pat, rep);
+    }
+
+    // 3. Replace generic AI vocabulary
+    const vocabUpgrades: [RegExp, string][] = [
+      [/\butilize\b/gi, "use"],
+      [/\bfacilitate\b/gi, "help"],
+      [/\bcommence\b/gi, "start"],
+      [/\bnumerous\b/gi, "many"],
+      [/\bpurchase\b/gi, "buy"],
+      [/\bprior to\b/gi, "before"],
+      [/\bin order to\b/gi, "to"],
+      [/\bat this point in time\b/gi, "now"],
+      [/\bin the event that\b/gi, "if"],
+      [/\bdue to the fact that\b/gi, "because"],
+      [/\bin spite of the fact that\b/gi, "although"],
+    ];
+    for (const [pat, rep] of vocabUpgrades) {
+      result = result.replace(pat, rep);
+    }
+
+    return result;
   }
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -768,7 +773,7 @@ OUTPUT: Return ONLY the edited HTML. No preamble, no explanation, no markdown.`;
     this.log(`Phase 3 ✅ References: ${references.length} high-authority sources found.`);
 
     // ── Phase 4: Master Content Synthesis ─────────────────────────────────
-    this.log('Phase 4: Master Content Generation (High-Burstiness Engine)...');
+    this.log('Phase 4: Master Content Generation (Human-First Anti-AI Engine)...');
 
     const systemPrompt = buildMasterSystemPrompt();
 
@@ -776,8 +781,10 @@ OUTPUT: Return ONLY the edited HTML. No preamble, no explanation, no markdown.`;
       ? neuron.service.buildFullPromptSection(neuron.analysis)
       : 'No NeuronWriter data available. Focus on comprehensive semantic coverage using LSI keywords, natural language variation, and expert-level topic coverage.';
 
-    // Build YouTube embed data for prompt (first video only for AI to place)
-    const youtubeEmbed = videos.length > 0 ? { videoId: videos[0].id, title: videos[0].title } : undefined;
+    // Build YouTube embed data for prompt
+    const youtubeEmbed = videos.length > 0
+      ? videos.slice(0, 3).map(v => ({ videoId: v.id, title: v.title }))
+      : undefined;
 
     const userPrompt = buildMasterUserPrompt({
       primaryKeyword: options.keyword,
@@ -796,7 +803,7 @@ OUTPUT: Return ONLY the edited HTML. No preamble, no explanation, no markdown.`;
       model: options.model || this.config.primaryModel || 'gemini',
       apiKeys: this.config.apiKeys,
       maxTokens: 16384,
-      temperature: 0.82
+      temperature: 0.85
     });
 
     let html = genResult.content;
@@ -805,25 +812,58 @@ OUTPUT: Return ONLY the edited HTML. No preamble, no explanation, no markdown.`;
       throw new Error(`AI returned insufficient content (${html?.length || 0} chars). Try switching to a different model.`);
     }
 
-    // ── Phase 5: SOTA Refinement & Aesthetics ─────────────────────────────
-    this.log('Phase 5: SOTA Humanization & Premium Design Overlay...');
+    // ── Phase 5: NeuronWriter Term Enforcement (THE CRITICAL FIX) ─────────
+    if (neuron) {
+      this.log('Phase 5: NeuronWriter Term Enforcement — verifying keyword coverage...');
+      const allNwTerms = [
+        ...(neuron.analysis.terms || []),
+        ...(neuron.analysis.termsExtended || []),
+      ];
+      const contentLower = html.replace(/<[^>]*>/g, ' ').toLowerCase();
+      const missingTerms = allNwTerms
+        .filter(t => t.term && !contentLower.includes(t.term.toLowerCase()))
+        .map(t => t.term);
 
-    html = await this.humanizeContent(html, options.keyword);
+      const totalTerms = allNwTerms.filter(t => t.term).length;
+      const coveredTerms = totalTerms - missingTerms.length;
+      const coveragePct = totalTerms > 0 ? Math.round((coveredTerms / totalTerms) * 100) : 100;
+
+      this.log(`NW Coverage: ${coveredTerms}/${totalTerms} terms (${coveragePct}%). Missing: ${missingTerms.length}`);
+
+      if (missingTerms.length > 0) {
+        this.log(`Injecting ${Math.min(missingTerms.length, 30)} missing NW terms into content...`);
+        html = injectMissingTerms(html, missingTerms.slice(0, 30));
+
+        // Re-check coverage after injection
+        const contentLower2 = html.replace(/<[^>]*>/g, ' ').toLowerCase();
+        const stillMissing = missingTerms.filter(t => !contentLower2.includes(t.toLowerCase()));
+        const finalCoverage = totalTerms > 0 ? Math.round(((totalTerms - stillMissing.length) / totalTerms) * 100) : 100;
+        this.log(`Phase 5 ✅ Final NW coverage: ${finalCoverage}% (${stillMissing.length} terms still missing)`);
+      } else {
+        this.log('Phase 5 ✅ All NeuronWriter terms covered!');
+      }
+    } else {
+      this.log('Phase 5: Skipped — no NeuronWriter data.');
+    }
+
+    // ── Phase 6: SOTA Refinement & Aesthetics ─────────────────────────────
+    this.log('Phase 6: Anti-AI Polish & Premium Design Overlay...');
+
     html = polishReadability(html);
     html = await this.applyPremiumStyling(html);
 
-    // ── Phase 6: Visual Break Enforcement ─────────────────────────────────
-    this.log('Phase 6: Visual Break Enforcement (breaking walls of text)...');
+    // ── Phase 6b: Visual Break Enforcement ────────────────────────────────
+    this.log('Phase 6b: Visual Break Enforcement (breaking walls of text)...');
 
     const postProcessResult = postProcessContent(html, {
       maxConsecutiveWords: 200,
       usePullQuotes: true,
-      enhanceDesign: false, // Already styled by applyPremiumStyling
+      enhanceDesign: false,
       removeAI: true,
     });
 
     html = postProcessResult.html;
-    this.log(`Phase 6 ✅ Visual breaks: ${postProcessResult.elementsInjected} elements injected, ${postProcessResult.violations.length} remaining violations.`);
+    this.log(`Phase 6b ✅ Visual breaks: ${postProcessResult.elementsInjected} elements injected.`);
 
     // ── Phase 7: YouTube Video Injection ──────────────────────────────────
     this.log('Phase 7: Injecting YouTube videos...');

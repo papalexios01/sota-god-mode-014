@@ -1,13 +1,18 @@
 // src/lib/sota/EnterpriseContentOrchestrator.ts
 // ═══════════════════════════════════════════════════════════════════════════════
-// ENTERPRISE CONTENT ORCHESTRATOR v9.1 — SOTA GOD-MODE ARCHITECTURE
+// ENTERPRISE CONTENT ORCHESTRATOR v10.0 — SOTA GOD-MODE ARCHITECTURE
 //
 // Pipeline phases:
 //   1. NeuronWriter Semantic Context Initialization (auto-create + poll)
-//   2. Master Content Generation (AI model)
-//   3. SOTA Humanization & Premium Design Overlay
-//   4. Internal Link Generation & Injection (4–8 contextual links)
-//   5. Schema.org Structured Data Generation
+//   2. YouTube Video Discovery (1-3 relevant videos via Serper)
+//   3. Reference Gathering (8-12 high-quality references via Serper)
+//   4. Master Content Generation (AI model)
+//   5. SOTA Humanization & Premium Design Overlay
+//   6. Visual Break Enforcement (break walls of text every ~200 words)
+//   7. YouTube Video Injection (embed + cards)
+//   8. Reference Section Injection
+//   9. Internal Link Generation & Injection (4–8 contextual links)
+//  10. Schema.org Structured Data Generation
 // ═══════════════════════════════════════════════════════════════════════════════
 
 import type {
@@ -53,7 +58,7 @@ import {
   type NeuronWriterAnalysis,
   type NeuronWriterQuery,
 } from './NeuronWriterService';
-import ContentPostProcessor, { removeAIPatterns } from './ContentPostProcessor';
+import ContentPostProcessor, { removeAIPatterns, postProcessContent } from './ContentPostProcessor';
 import {
   buildMasterSystemPrompt,
   buildMasterUserPrompt,
@@ -100,10 +105,14 @@ export class EnterpriseContentOrchestrator {
 
   constructor(config: any) {
     this.config = config;
+
+    // Extract serperApiKey from nested apiKeys or from top-level config
+    const serperKey = config.apiKeys?.serperApiKey || config.serperApiKey || '';
+
     this.engine = createSOTAEngine(config.apiKeys);
-    this.serpAnalyzer = createSERPAnalyzer(config.apiKeys);
-    this.youtubeService = createYouTubeService(config.apiKeys);
-    this.referenceService = createReferenceService(config.apiKeys);
+    this.serpAnalyzer = createSERPAnalyzer(serperKey);
+    this.youtubeService = createYouTubeService(serperKey);
+    this.referenceService = createReferenceService(serperKey);
     this.linkEngine = createInternalLinkEngine(config.sitePages || []);
     // FIX: SchemaGenerator(orgName, orgUrl, logoUrl) — never pass apiKeys here
     this.schemaGenerator = createSchemaGenerator(
@@ -141,7 +150,25 @@ export class EnterpriseContentOrchestrator {
       return null;
     }
 
-    const service = createNeuronWriterService(this.config.neuronWriterApiKey);
+    // Build NeuronWriter config with proper proxy routing
+    const nwConfig: any = {
+      neuronWriterApiKey: this.config.neuronWriterApiKey,
+    };
+
+    // If a customProxyUrl is set, pass it through
+    if (this.config.customProxyUrl) {
+      nwConfig.customProxyUrl = this.config.customProxyUrl;
+    }
+
+    // Pass Supabase credentials for edge function auth (if using Supabase proxy)
+    if (this.config.supabaseUrl) {
+      nwConfig.supabaseUrl = this.config.supabaseUrl;
+    }
+    if (this.config.supabaseAnonKey) {
+      nwConfig.supabaseAnonKey = this.config.supabaseAnonKey;
+    }
+
+    const service = createNeuronWriterService(nwConfig);
     const projectId = this.config.neuronWriterProjectId;
     const startTime = Date.now();
 
@@ -244,6 +271,190 @@ export class EnterpriseContentOrchestrator {
       this.error(`NeuronWriter Subsystem Error: ${e}`);
       return null;
     }
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // YOUTUBE VIDEO DISCOVERY & INJECTION
+  // ─────────────────────────────────────────────────────────────────────────
+
+  private async fetchYouTubeVideos(keyword: string): Promise<YouTubeVideo[]> {
+    try {
+      this.log('Searching for relevant YouTube videos...');
+      const videos = await this.youtubeService.getRelevantVideos(keyword, 'guide');
+
+      if (videos.length === 0) {
+        this.warn('YouTube: No relevant videos found.');
+        return [];
+      }
+
+      // Take 1-3 videos
+      const selected = videos.slice(0, 3).filter(v => v.id && v.id.length > 0);
+      this.log(`YouTube: Found ${selected.length} relevant videos.`);
+      return selected;
+    } catch (e) {
+      this.warn(`YouTube: Video search failed (${e}). Proceeding without videos.`);
+      return [];
+    }
+  }
+
+  private injectYouTubeVideos(html: string, videos: YouTubeVideo[]): string {
+    if (!videos || videos.length === 0) return html;
+
+    let result = html;
+
+    // Find H2 headings to distribute videos across sections
+    const h2Matches = [...result.matchAll(/<h2[^>]*>[\s\S]*?<\/h2>/gi)];
+
+    if (h2Matches.length < 2) {
+      // If not enough headings, inject all videos before the article footer
+      const videoBlock = this.buildVideoSectionHtml(videos);
+      const footerIdx = result.indexOf('data-article-footer');
+      if (footerIdx !== -1) {
+        const insertPoint = result.lastIndexOf('<div', footerIdx);
+        if (insertPoint !== -1) {
+          result = result.slice(0, insertPoint) + '\n' + videoBlock + '\n' + result.slice(insertPoint);
+        }
+      } else {
+        result = result.replace('</article>', videoBlock + '\n</article>');
+      }
+      return result;
+    }
+
+    // Distribute: embed first video after 2nd H2, place cards for remaining as a section
+    const firstVideo = videos[0];
+    const remainingVideos = videos.slice(1);
+
+    // Embed the first video after the 2nd H2's section (after 2-3 paragraphs)
+    if (firstVideo && h2Matches.length >= 2) {
+      const secondH2 = h2Matches[1];
+      const searchStart = secondH2.index! + secondH2[0].length;
+
+      // Find the 2nd </p> after this H2
+      let pCount = 0;
+      let insertPos = searchStart;
+      const pClosingRegex = /<\/p>/gi;
+      pClosingRegex.lastIndex = searchStart;
+      let pMatch;
+      while ((pMatch = pClosingRegex.exec(result)) !== null) {
+        pCount++;
+        if (pCount >= 2) {
+          insertPos = pMatch.index + pMatch[0].length;
+          break;
+        }
+      }
+
+      const embedHtml = this.youtubeService.formatVideoEmbed(firstVideo);
+      result = result.slice(0, insertPos) + '\n' + embedHtml + '\n' + result.slice(insertPos);
+    }
+
+    // Insert remaining videos as cards in a dedicated section before references
+    if (remainingVideos.length > 0) {
+      const videoCardsHtml = this.buildVideoCardsSection(remainingVideos);
+      const refsIdx = result.search(/<h2[^>]*>.*?(?:references|sources|further reading)/i);
+      if (refsIdx !== -1) {
+        result = result.slice(0, refsIdx) + '\n' + videoCardsHtml + '\n' + result.slice(refsIdx);
+      } else {
+        const footerIdx = result.indexOf('data-article-footer');
+        if (footerIdx !== -1) {
+          const insertPoint = result.lastIndexOf('<div', footerIdx);
+          if (insertPoint !== -1) {
+            result = result.slice(0, insertPoint) + '\n' + videoCardsHtml + '\n' + result.slice(insertPoint);
+          }
+        } else {
+          result = result.replace('</article>', videoCardsHtml + '\n</article>');
+        }
+      }
+    }
+
+    return result;
+  }
+
+  private buildVideoSectionHtml(videos: YouTubeVideo[]): string {
+    if (videos.length === 0) return '';
+
+    const embed = videos[0] ? this.youtubeService.formatVideoEmbed(videos[0]) : '';
+    const cards = videos.slice(1).map(v => this.youtubeService.formatVideoCard(v)).join('\n');
+
+    return `
+<div style="margin: 48px 0;">
+  <h2 style="font-size:1.95em;font-weight:900;color:#0f172a;margin:0 0 20px 0;line-height:1.15;letter-spacing:-0.025em;font-family:'Inter',system-ui,sans-serif;border-bottom:3px solid #e2e8f0;padding-bottom:12px;">🎬 Helpful Video Resources</h2>
+  ${embed}
+  ${cards}
+</div>`;
+  }
+
+  private buildVideoCardsSection(videos: YouTubeVideo[]): string {
+    if (videos.length === 0) return '';
+    const cards = videos.map(v => this.youtubeService.formatVideoCard(v)).join('\n');
+    return `
+<div style="margin: 40px 0;">
+  <h3 style="font-size:1.3em;font-weight:800;color:#1e293b;margin:0 0 16px 0;font-family:'Inter',system-ui,sans-serif;">📺 More Videos Worth Watching</h3>
+  ${cards}
+</div>`;
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // REFERENCE GATHERING & INJECTION
+  // ─────────────────────────────────────────────────────────────────────────
+
+  private async fetchReferences(keyword: string): Promise<Reference[]> {
+    try {
+      this.log('Gathering high-quality references via Serper...');
+      const refs = await this.referenceService.getTopReferences(keyword, 12);
+      this.log(`References: Found ${refs.length} high-authority sources.`);
+      return refs;
+    } catch (e) {
+      this.warn(`References: Search failed (${e}). Proceeding without references.`);
+      return [];
+    }
+  }
+
+  private injectReferencesSection(html: string, references: Reference[]): string {
+    if (!references || references.length === 0) return html;
+
+    // Check if references/sources section already exists
+    const hasRefs = /<h2[^>]*>\s*(?:references|sources|further reading|sources\s*&\s*further\s*reading)/i.test(html);
+    if (hasRefs) {
+      this.log('References: Article already contains a references section. Skipping injection.');
+      return html;
+    }
+
+    const refsHtml = this.referenceService.formatReferencesSection(references);
+
+    // Style the references section to match premium design
+    const styledRefsHtml = `
+<div style="margin: 56px 0 0 0; padding-top: 40px; border-top: 2px solid #e2e8f0;">
+  <h2 style="font-size:1.95em;font-weight:900;color:#0f172a;margin:0 0 20px 0;line-height:1.15;letter-spacing:-0.025em;font-family:'Inter',system-ui,sans-serif;border-bottom:3px solid #e2e8f0;padding-bottom:12px;">📚 Sources & Further Reading</h2>
+  <div style="font-family:'Inter',system-ui,sans-serif;">
+    <ol style="margin:0;padding:0 0 0 0;list-style:none;counter-reset:ref-counter;">
+      ${references.map((ref, i) => {
+      const safeTitle = (ref.title || '').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      const typeLabel = ref.type === 'academic' ? ' <span style="background:#dbeafe;color:#1e40af;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:700;">Academic</span>'
+        : ref.type === 'government' ? ' <span style="background:#dcfce7;color:#15803d;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:700;">Official</span>'
+          : ref.type === 'news' ? ' <span style="background:#fef3c7;color:#92400e;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:700;">News</span>'
+            : '';
+      return `<li style="margin:0 0 16px 0;padding:12px 16px;background:#f8fafc;border-radius:10px;border:1px solid #e2e8f0;display:flex;align-items:flex-start;gap:12px;">
+          <span style="flex-shrink:0;width:28px;height:28px;background:linear-gradient(135deg,#6366f1,#8b5cf6);color:white;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:800;">${i + 1}</span>
+          <div>
+            <a href="${ref.url}" target="_blank" rel="noopener noreferrer" style="color:#1e293b;text-decoration:none;font-weight:600;font-size:15px;line-height:1.4;">${safeTitle}</a>
+            <div style="margin-top:4px;font-size:12px;color:#64748b;">${ref.domain}${typeLabel}</div>
+          </div>
+        </li>`;
+    }).join('\n')}
+    </ol>
+  </div>
+</div>`;
+
+    // Insert before the article footer or before </article>
+    const footerIdx = html.indexOf('data-article-footer');
+    if (footerIdx !== -1) {
+      const insertPoint = html.lastIndexOf('<div', footerIdx);
+      if (insertPoint !== -1) {
+        return html.slice(0, insertPoint) + '\n' + styledRefsHtml + '\n' + html.slice(insertPoint);
+      }
+    }
+
+    return html.replace('</article>', styledRefsHtml + '\n</article>');
   }
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -519,7 +730,7 @@ OUTPUT: Return ONLY the edited HTML. No preamble, no explanation, no markdown.`;
 
   async generateContent(options: any): Promise<any> {
     this.onProgress = options.onProgress;
-    this.log(`🚀 SOTA GOD-MODE PIPELINE v9.1 ENGAGED: "${options.keyword}"`);
+    this.log(`🚀 SOTA GOD-MODE PIPELINE v10.0 ENGAGED: "${options.keyword}"`);
 
     this.config.currentTitle = options.title || options.keyword;
     this.config.authorName = options.authorName || 'SOTA AI Research';
@@ -542,14 +753,31 @@ OUTPUT: Return ONLY the edited HTML. No preamble, no explanation, no markdown.`;
       this.warn('Phase 1: NeuronWriter data unavailable — generating without semantic optimization.');
     }
 
-    // ── Phase 2: Master Content Synthesis ─────────────────────────────────
-    this.log('Phase 2: Master Content Generation (High-Burstiness Engine)...');
+    // ── Phase 2: YouTube Video Discovery (parallel with Phase 3) ──────────
+    this.log('Phase 2: YouTube Video Discovery...');
+    const videosPromise = this.fetchYouTubeVideos(options.keyword);
+
+    // ── Phase 3: Reference Gathering (parallel with Phase 2) ──────────────
+    this.log('Phase 3: Reference Gathering (8-12 high-quality sources)...');
+    const referencesPromise = this.fetchReferences(options.keyword);
+
+    // Wait for both parallel phases
+    const [videos, references] = await Promise.all([videosPromise, referencesPromise]);
+
+    this.log(`Phase 2 ✅ YouTube: ${videos.length} videos found.`);
+    this.log(`Phase 3 ✅ References: ${references.length} high-authority sources found.`);
+
+    // ── Phase 4: Master Content Synthesis ─────────────────────────────────
+    this.log('Phase 4: Master Content Generation (High-Burstiness Engine)...');
 
     const systemPrompt = buildMasterSystemPrompt();
 
     const neuronWriterSection = neuron
       ? neuron.service.buildFullPromptSection(neuron.analysis)
       : 'No NeuronWriter data available. Focus on comprehensive semantic coverage using LSI keywords, natural language variation, and expert-level topic coverage.';
+
+    // Build YouTube embed data for prompt (first video only for AI to place)
+    const youtubeEmbed = videos.length > 0 ? { videoId: videos[0].id, title: videos[0].title } : undefined;
 
     const userPrompt = buildMasterUserPrompt({
       primaryKeyword: options.keyword,
@@ -559,6 +787,7 @@ OUTPUT: Return ONLY the edited HTML. No preamble, no explanation, no markdown.`;
       neuronWriterSection,
       authorName: this.config.authorName,
       internalLinks: options.internalLinks || [],
+      youtubeEmbed,
     } as any);
 
     const genResult = await this.engine.generateWithModel({
@@ -576,15 +805,38 @@ OUTPUT: Return ONLY the edited HTML. No preamble, no explanation, no markdown.`;
       throw new Error(`AI returned insufficient content (${html?.length || 0} chars). Try switching to a different model.`);
     }
 
-    // ── Phase 3: SOTA Refinement & Aesthetics ─────────────────────────────
-    this.log('Phase 3: SOTA Humanization & Premium Design Overlay...');
+    // ── Phase 5: SOTA Refinement & Aesthetics ─────────────────────────────
+    this.log('Phase 5: SOTA Humanization & Premium Design Overlay...');
 
     html = await this.humanizeContent(html, options.keyword);
     html = polishReadability(html);
     html = await this.applyPremiumStyling(html);
 
-    // ── Phase 4: Internal Link Generation & Injection (4–8 links) ─────────
-    this.log('Phase 4: Generating & Injecting Internal Links...');
+    // ── Phase 6: Visual Break Enforcement ─────────────────────────────────
+    this.log('Phase 6: Visual Break Enforcement (breaking walls of text)...');
+
+    const postProcessResult = postProcessContent(html, {
+      maxConsecutiveWords: 200,
+      usePullQuotes: true,
+      enhanceDesign: false, // Already styled by applyPremiumStyling
+      removeAI: true,
+    });
+
+    html = postProcessResult.html;
+    this.log(`Phase 6 ✅ Visual breaks: ${postProcessResult.elementsInjected} elements injected, ${postProcessResult.violations.length} remaining violations.`);
+
+    // ── Phase 7: YouTube Video Injection ──────────────────────────────────
+    this.log('Phase 7: Injecting YouTube videos...');
+    html = this.injectYouTubeVideos(html, videos);
+    this.log(`Phase 7 ✅ ${videos.length} videos injected into content.`);
+
+    // ── Phase 8: Reference Section Injection ──────────────────────────────
+    this.log('Phase 8: Injecting references section...');
+    html = this.injectReferencesSection(html, references);
+    this.log(`Phase 8 ✅ ${references.length} references injected.`);
+
+    // ── Phase 9: Internal Link Generation & Injection (4–8 links) ─────────
+    this.log('Phase 9: Generating & Injecting Internal Links...');
 
     let finalInternalLinks: InternalLink[] = [];
 
@@ -595,16 +847,16 @@ OUTPUT: Return ONLY the edited HTML. No preamble, no explanation, no markdown.`;
       if (generatedLinks.length > 0) {
         html = this.linkEngine.injectContextualLinks(html, generatedLinks);
         finalInternalLinks = generatedLinks;
-        this.log(`Phase 4 ✅ Injected ${generatedLinks.length} contextual internal links.`);
+        this.log(`Phase 9 ✅ Injected ${generatedLinks.length} contextual internal links.`);
       } else {
-        this.warn('Phase 4: No matching site pages found for internal linking. Ensure your sitemap has been loaded.');
+        this.warn('Phase 9: No matching site pages found for internal linking. Ensure your sitemap has been loaded.');
       }
     } else {
-      this.warn('Phase 4: Skipping internal links — no site pages loaded. Add a Sitemap URL in the Setup tab.');
+      this.warn('Phase 9: Skipping internal links — no site pages loaded. Add a Sitemap URL in the Setup tab.');
     }
 
-    // ── Phase 5: Schema.org Structured Data ───────────────────────────────
-    this.log('Phase 5: Generating Schema.org Structured Data...');
+    // ── Phase 10: Schema.org Structured Data ───────────────────────────────
+    this.log('Phase 10: Generating Schema.org Structured Data...');
 
     const authorName = this.config.authorName || 'Editorial Team';
     const siteUrl = (this.config.organizationUrl || this.config.wpUrl || 'https://example.com').replace(/\/$/, '');
@@ -635,12 +887,12 @@ OUTPUT: Return ONLY the edited HTML. No preamble, no explanation, no markdown.`;
     let schema: any = { '@context': 'https://schema.org', '@graph': [] };
     try {
       schema = this.schemaGenerator.generateComprehensiveSchema(contentForSchema, articleUrl);
-      this.log(`Phase 5 ✅ Schema generated with ${schema['@graph']?.length || 0} entities.`);
+      this.log(`Phase 10 ✅ Schema generated with ${schema['@graph']?.length || 0} entities.`);
     } catch (e) {
-      this.warn(`Phase 5: Schema generation failed (${e}). Using empty schema.`);
+      this.warn(`Phase 10: Schema generation failed (${e}). Using empty schema.`);
     }
 
-    this.log('✅ All phases complete. Assembling final result...');
+    this.log('✅ All 10 phases complete. Assembling final result...');
 
     const wordCount = html.replace(/<[^>]*>/g, ' ').split(/\s+/).filter(Boolean).length;
 
@@ -678,7 +930,7 @@ OUTPUT: Return ONLY the edited HTML. No preamble, no explanation, no markdown.`;
           expertiseAreas: [options.keyword],
           socialProfiles: []
         },
-        citations: [],
+        citations: references.map(r => ({ title: r.title, url: r.url, type: r.type })),
         expertReviews: [],
         methodology: '',
         lastUpdated: new Date(),
@@ -705,6 +957,8 @@ OUTPUT: Return ONLY the edited HTML. No preamble, no explanation, no markdown.`;
       consensusUsed: false,
       neuronWriterAnalysis: neuron?.analysis || null,
       neuronWriterQueryId: neuron?.queryId || null,
+      youtubeVideos: videos,
+      references,
       telemetry: this.telemetry
     } as any;
   }
